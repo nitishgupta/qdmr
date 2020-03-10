@@ -188,6 +188,20 @@ class QDMRLanguage(DomainLanguage):
         pass
 
     @predicate
+    def SUPERLATIVE_max(self, s: Set[PassageSpan], passage2num: Passage2Number) -> Set[PassageSpan]:
+        """Given a set of passage spans and a function that maps a span to a number, output the span w/ the largest num
+        Needs to implement 'max' within this predicate itself.
+        """
+        pass
+
+    @predicate
+    def SUPERLATIVE_min(self, s: Set[PassageSpan], passage2num: Passage2Number) -> Set[PassageSpan]:
+        """Given a set of passage spans and a function that maps a span to a number, output the span w/ the largest num
+        Needs to implement 'max' within this predicate itself.
+        """
+        pass
+
+    @predicate
     def PARTIAL_GROUP_count(self, passage2setpassage: Passage2SetPassage) -> Passage2Number:
         """ This is a partial implementation of the GROUP_count function.
 
@@ -245,9 +259,16 @@ class QDMRLanguage(DomainLanguage):
         pass
 
     @predicate
+    def PARTIAL_SELECT_NUM(self, question_span: QuestionSpan) -> Passage2SetNumber:
+        """This function can wrap the input span to Set[Passage], run project with ques_span and return SELECT_NUM"""
+        pass
+
+    @predicate
     def SELECT_NUM_SPAN(self) -> Passage2SetNumber:
         """This function can wrap the input span to Set[Passage] and run SELECT_NUM"""
         pass
+
+
 
     @predicate
     def BOOLEAN(self, s: Set[PassageSpan], string: QuestionSpan) -> Bool:
@@ -260,17 +281,17 @@ class QDMRLanguage(DomainLanguage):
         pass
 
 
-    @predicate
-    def SUPERLATIVE_min(self, s: Set[PassageSpan], sp: SetProp) -> Set[PassageSpan]:
-        pass
-
-    @predicate
-    def SUPERLATIVE_max(self, s: Set[PassageSpan], sp: SetProp) -> Set[PassageSpan]:
-        pass
-
-
-
 def main():
+    def nested_expression_to_lisp(nested_expression):
+        if isinstance(nested_expression, str):
+            return nested_expression
+
+        elif isinstance(nested_expression, List):
+            lisp_expressions = [nested_expression_to_lisp(x) for x in nested_expression]
+            return "(" + " ".join(lisp_expressions) + ")"
+        else:
+            raise NotImplementedError
+
     qdmr_language = QDMRLanguage()
 
     print("Non termincal prods")
@@ -290,7 +311,14 @@ def main():
     print(nested_expression)
     print(action_seq)
 
-    print(partial_project("b"))
+
+    nested_expression = ['COMPARATIVE',
+                             ['SELECT', 'nationalities registered in Bilbao'],
+                             ['PARTIAL_GROUP_count', ['PARTIAL_PROJECT', 'people of #REF']],
+                             ['CONDITION', 'is higher than 10']
+                        ]
+
+
 
 
 
