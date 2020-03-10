@@ -113,6 +113,16 @@ class QDMRLanguage(DomainLanguage):
         pass
 
     @predicate
+    def COMPARISON_sum_max(self, s1: Set[PassageSpan], s2: Set[PassageSpan]) -> Set[PassageSpan]:
+        """This should implicitly be calling AGGREGATE_sum on both sets and doing comparisons."""
+        pass
+
+    @predicate
+    def COMPARISON_sum_min(self, s1: Set[PassageSpan], s2: Set[PassageSpan]) -> Set[PassageSpan]:
+        """This should implicitly be calling AGGREGATE_sum on both sets and doing comparisons."""
+        pass
+
+    @predicate
     def UNION(self, s1: Set[PassageSpan], s2: Set[PassageSpan]) -> Set[PassageSpan]:
         pass
 

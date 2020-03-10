@@ -1,5 +1,5 @@
 from typing import List, Dict, Tuple
-
+import os
 import json
 from collections import defaultdict
 import random
@@ -36,6 +36,20 @@ class QDMRExample():
         self.program: List[str] = q_decomp["program"]
         self.nested_expression: List = q_decomp["nested_expression"]
         self.operators = q_decomp["operators"]
+        # This will filled by this script if transformation to QDMR-language is successful
+        self.typed_nested_expression: List = []
+
+
+    def to_json(self):
+        json_dict = {
+            "question_id": self.query_id,
+            "question_text": self.question,
+            "program": self.program,
+            "nested_expression": self.nested_expression,
+            "typed_nested_expression": self.typed_nested_expression,
+            "operators": self.operators
+        }
+        return json_dict
 
 
 class Node(object):
@@ -160,62 +174,40 @@ def transform_to_fit_grammar(node: Node, question: str, top_level=False):
 
     skip_recursive_type_conforming = False
 
-    # If node is one of ARITHMETIC_sum, ARITHMETIC_difference, ARITHMETIC_divison, ARITHMETIC_multiplication; then
-    # both arguments need to be numbers. So if
-    # (a) SELECT --> SELECT_NUM
-    # (b) AGGREGATE_max --> SELECT_NUM(AGGREGATE_max)
-    # (c) AGGREGATE_min --> SELECT_NUM(AGGREGATE_min)
-
-    if node.predicate in ["ARITHMETIC_sum", "ARITHMETIC_difference", "ARITHMETIC_divison", "ARITHMETIC_multiplication"]:
-        # assert len(node.children) == 2, f"These functions should only have two children : {node.get_nested_expression()}"
-        new_children = []
-        for child in node.children:
-            if child.predicate == "SELECT":
-                new_child = Node(predicate="SELECT_NUM")
-                new_child.add_child(child)
-                new_children.append(new_child)
-            elif child.predicate == "AGGREGATE_max":
-                new_child = Node(predicate="SELECT_NUM")
-                new_child.add_child(child)
-                new_children.append(new_child)
-            elif child.predicate == "AGGREGATE_min":
-                new_child = Node(predicate="SELECT_NUM")
-                new_child.add_child(child)
-                new_children.append(new_child)
-            elif child.predicate == "PROJECT":
-                new_child = Node(predicate="SELECT_NUM")
-                new_child.add_child(child)
-                new_children.append(new_child)
-            else:
-                new_children.append(child)
-        # Replace old children with new ones
-        node.children = []
-        for c in new_children:
-            node.add_child(c)
-
-    # Trivia -- 300 programs in DROP_train were fixed by this!!
-    elif node.predicate in ["COMPARISON_max", "COMPARISON_min"]:
-        # First check if all children are AGGREGATE_count(SELECT)
+    # Trivia -- 330 programs in DROP_train were fixed by this!!
+    if node.predicate in ["COMPARISON_max", "COMPARISON_min"]:
+        # First check if all children are AGGREGATE_count(SELECT) or AGGREGATE_sum(SELECT)
         all_chilren_count_select = True
+        all_chilren_sum_select = True
         for child in node.children:
             child_is_count_select = False
-            if child.predicate in ["AGGREGATE_count"]:   # TODO(nitish): add "AGGREGATE_sum" to list?
+            child_is_sum_select = False
+            if child.predicate in ["AGGREGATE_count"]:
                 if len(child.children) == 1 and child.children[0].predicate == "SELECT":
                     child_is_count_select = True
+            elif child.predicate in ["AGGREGATE_sum"]:
+                if len(child.children) == 1 and child.children[0].predicate == "SELECT":
+                    child_is_sum_select = True
             all_chilren_count_select = all_chilren_count_select and child_is_count_select
+            all_chilren_sum_select = all_chilren_sum_select and child_is_sum_select
 
-        if all_chilren_count_select:
-            # Need to remove AGGREGATE_count from all children and change the function at this node.
+        if all_chilren_count_select or all_chilren_sum_select:
+            # Need to remove AGGREGATE_count/AGGREGATE_sum from all children and change the function at this node.
             new_children = []
             for child in node.children:
-                # We know from the test above that the child is AGGREGATE_count and it only has one child that is SELECT
+                # From the test above: The child is AGGREGATE_count/sum and it only has one child that is SELECT
                 new_child = child.children[0]
                 new_children.append(new_child)
-                # Replace old children with new ones
+            # Replace old children with new ones
             node.children = []
             for c in new_children:
                 node.add_child(c)
-            node.predicate = "COMPARISON_count_max" if node.predicate == "COMPARISON_max" else "COMPARISON_count_min"
+            predicate = ""
+            if all_chilren_count_select:
+                predicate = "COMPARISON_count_max" if node.predicate == "COMPARISON_max" else "COMPARISON_count_min"
+            if all_chilren_sum_select:
+                predicate = "COMPARISON_sum_max" if node.predicate == "COMPARISON_max" else "COMPARISON_sum_min"
+            node.predicate = predicate
 
     elif node.predicate in ["COMPARATIVE"]:
         # CASE 1 --
@@ -412,7 +404,40 @@ def transform_to_fit_grammar(node: Node, question: str, top_level=False):
             lisp = nested_expression_to_lisp(node.get_nested_expression())
             qdmr_langugage.logical_form_to_action_sequence(lisp)
 
-    # print(node._get_nested_expression_with_strings())
+    # Putting low-level operators down the if/else ladder so that if higher-order combinations are given priority
+    # If node is one of ARITHMETIC_sum, ARITHMETIC_difference, ARITHMETIC_divison, ARITHMETIC_multiplication; then
+    # both arguments need to be numbers. So if
+    # (a) SELECT --> SELECT_NUM
+    # (b) AGGREGATE_max --> SELECT_NUM(AGGREGATE_max)
+    # (c) AGGREGATE_min --> SELECT_NUM(AGGREGATE_min)
+    elif node.predicate in ["ARITHMETIC_sum", "ARITHMETIC_difference",
+                            "ARITHMETIC_divison", "ARITHMETIC_multiplication"]:
+        # assert len(node.children) == 2, f"These functions should only have two children : {node.get_nested_expression()}"
+        new_children = []
+        for child in node.children:
+            if child.predicate == "SELECT":
+                new_child = Node(predicate="SELECT_NUM")
+                new_child.add_child(child)
+                new_children.append(new_child)
+            elif child.predicate == "AGGREGATE_max":
+                new_child = Node(predicate="SELECT_NUM")
+                new_child.add_child(child)
+                new_children.append(new_child)
+            elif child.predicate == "AGGREGATE_min":
+                new_child = Node(predicate="SELECT_NUM")
+                new_child.add_child(child)
+                new_children.append(new_child)
+            elif child.predicate == "PROJECT":
+                new_child = Node(predicate="SELECT_NUM")
+                new_child.add_child(child)
+                new_children.append(new_child)
+            else:
+                new_children.append(child)
+        # Replace old children with new ones
+        node.children = []
+        for c in new_children:
+            node.add_child(c)
+
     if not skip_recursive_type_conforming:   # No condition sets this to True yet
         # Type-conforming all children of this node
         new_children = []
@@ -441,7 +466,6 @@ def parse_qdmr_program_into_language(question: str, nested_expression: List):
 
     Find issues for programs that cannot be converted, define new predicates, etc.
     """
-    original_lisp = nested_expression_to_lisp(nested_expression)
     program_tree = nested_expression_to_tree(nested_expression)
     # Map string arguments to GET_QUESTION_SPAN predicate and move the string argument to node.string_arg
     program_tree = mask_string_argument_to_type(node=program_tree)
@@ -451,11 +475,9 @@ def parse_qdmr_program_into_language(question: str, nested_expression: List):
 
     try:
         qdmr_langugage.logical_form_to_action_sequence(lisp_program)
-        return True
+        return True, program_tree
 
     except:
-        print(program_tree._get_nested_expression_with_strings())
-        print(question)
         template = nested_expression_to_lisp(program_tree.get_nested_expression())
         program = program_tree._get_nested_expression_with_strings()
         if template not in template2questionprogram:
@@ -464,9 +486,8 @@ def parse_qdmr_program_into_language(question: str, nested_expression: List):
         template2questionprogram[template].append((question, program))
         template2count[template] += 1
         total_not_parsed += 1
-        print()
 
-        return False
+        return False, program_tree
         # # print("Program cannot be parsed")
         # # print(lisp_program)
         # typed_program_tree = convert_to_type_conforming(program_tree)
@@ -487,17 +508,22 @@ def parse_qdmr_program_into_language(question: str, nested_expression: List):
 
 
 
-def parse_qdmr_into_language(qdmr_examples: List[QDMRExample]):
+def parse_qdmr_into_language(qdmr_examples: List[QDMRExample]) -> List[QDMRExample]:
     total_examples = len(qdmr_examples)
     total_examples_with_programs = 0
     type_conformed_programs = 0
     for qdmr_example in qdmr_examples:
+        typed_nested_expression = []
         if len(qdmr_example.nested_expression):
             total_examples_with_programs += 1
             # empty nested_expression implies parsing error
-            success = parse_qdmr_program_into_language(qdmr_example.question, qdmr_example.nested_expression)
+            success, program_tree = parse_qdmr_program_into_language(qdmr_example.question,
+                                                                     qdmr_example.nested_expression)
             if success:
+                # nested_expr where string arguments are not converted to GET_QUESTION_SPAN
+                typed_nested_expression = program_tree._get_nested_expression_with_strings()
                 type_conformed_programs += 1
+            qdmr_example.typed_nested_expression = typed_nested_expression
 
     print(f"Total examples: {total_examples}. W/ Programs: {total_examples_with_programs}")
     print(f"Type-conforming programs: {type_conformed_programs}")
@@ -507,6 +533,16 @@ def parse_qdmr_into_language(qdmr_examples: List[QDMRExample]):
 
     template2count_sorted = sorted(template2count.items(), key=lambda x: x[1], reverse=True)
     print(template2count_sorted[0:5])
+
+    for i in range(0, 10):
+        template, count = template2count_sorted[i]
+        print("\n{} : {}".format(template, count))
+        # questionprogram_list = template2questionprogram[template]
+        # for j in range(0, min(5, len(questionprogram_list))):
+        #     print(questionprogram_list[j])
+
+    return qdmr_examples
+
 
 
 def read_dataset(qdmr_json: str) -> List[QDMRExample]:
@@ -520,9 +556,16 @@ def read_dataset(qdmr_json: str) -> List[QDMRExample]:
 
 
 def main(args):
-    qdmr_json = args.qdmr_json
-    qdmr_examples: List[QDMRExample] = read_dataset(qdmr_json)
-    parse_qdmr_into_language(qdmr_examples)
+    qdmr_json_path = args.qdmr_json
+    qdmr_examples: List[QDMRExample] = read_dataset(qdmr_json_path)
+    qdmr_examples: List[QDMRExample] = parse_qdmr_into_language(qdmr_examples)
+
+    examples_as_json_dicts = [example.to_json() for example in qdmr_examples]
+
+    with open(qdmr_json_path, 'w') as outf:
+        json.dump(examples_as_json_dicts, outf, indent=4)
+
+
 
     # nested_expression = ['PROJECT', 'people of #REF', ['SELECT', 'nationalities registered in Bilbao']]
     # node: Node = nested_expression_to_tree(nested_expression)
@@ -543,13 +586,7 @@ def main(args):
     # print(is_project_select_node(node.children[1].children[0]))
 
 
-    """
-    # output_dir = os.path.split(qdmr_json)[0]
-    # print(output_dir)
-    # if not os.path.exists(output_dir):
-    #     os.makedirs(output_dir, exist_ok=True)
-    # convert_to_json(qdmr_csv, qdmr_json, dataset)
-    """
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
