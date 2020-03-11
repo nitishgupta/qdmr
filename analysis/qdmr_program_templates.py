@@ -9,11 +9,8 @@ from qdmr.utils import read_qdmr_json_to_examples, QDMRExample, Node, nested_exp
 
 random.seed(28)
 
-
-
-
-train_qdmr_json = "/shared/nitishg/data/break-dataset/QDMR-high-level/json/DROP_train.json"
-dev_qdmr_json = "/shared/nitishg/data/break-dataset/QDMR-high-level/json/DROP_dev.json"
+train_qdmr_json = " /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/train.json"
+dev_qdmr_json = " /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/dev.json "
 
 
 def get_operators(nested_expression):
@@ -32,6 +29,22 @@ def get_operators(nested_expression):
     return function_names, operator_template
 
 
+
+def convert_nestedexpr_to_tuple(nested_expression):
+    new_nested = []
+    for i, argument in enumerate(nested_expression):
+        if i == 0:
+            new_nested.append(argument)
+        else:
+            if isinstance(argument, list):
+                tupled_nested = convert_nestedexpr_to_tuple(argument)
+                new_nested.append(tupled_nested)
+            else:
+                new_nested.append(argument)
+    return tuple(new_nested)
+
+
+
 def read_qdmr(qdmr_examples: List[QDMRExample]):
     """ This data is processed using parse_dataset.parse_qdmr and keys in this json can be glanced at from there.
 
@@ -47,10 +60,12 @@ def read_qdmr(qdmr_examples: List[QDMRExample]):
     total_super = 0
 
     qid2ques = {}
-    qid2program = {}
+    qid2optemplate = {}
     function2qids = defaultdict(list)
     operatortemplate2count = defaultdict(int)
+    operatortemplate2qids = defaultdict(list)
     qid2nestedexp = {}
+
     for qdmr_example in qdmr_examples:
         query_id = qdmr_example.query_id
         question = qdmr_example.question
@@ -58,51 +73,37 @@ def read_qdmr(qdmr_examples: List[QDMRExample]):
         nested_expression: List = qdmr_example.nested_expression
         typed_nested_expression: List = qdmr_example.typed_nested_expression
 
-        program_tree = nested_expression_to_tree(typed_nested_expression)
-        program_tree = string_arg_to_quesspan_pred(node=program_tree)
-
-
-        qid2ques[query_id] = question
-        qid2program[query_id] = program
-        qid2nestedexp[query_id] = nested_expression
-
-        # Skip questions w/o program supervision
-        if "None" in program:
+        # Skip examples without typed program
+        if not len(typed_nested_expression):
             continue
 
-        functions_set, operator_template = get_operators(nested_expression)
+        program_tree = nested_expression_to_tree(typed_nested_expression)
+        program_tree = string_arg_to_quesspan_pred(node=program_tree)
+        masked_nested_expr = program_tree.get_nested_expression()
 
-        for func in functions_set:
-            function2qids[func].append(query_id)
+        # function_names, operator_template = get_operators(masked_nested_expr)
+        operator_template = convert_nestedexpr_to_tuple(masked_nested_expr) # tuple(operator_template)
 
-        operator_template = tuple(operator_template)
-
+        qid2ques[query_id] = question
+        qid2optemplate[query_id] = operator_template
+        qid2nestedexp[query_id] = program_tree._get_nested_expression_with_strings()
         operatortemplate2count[operator_template] += 1
-
-        # Some operators such as AGGREGATE, COMPARISON, etc. are high-level and need to be distinguished.
-        # normalized_operators = []
-        # for step in program:
-        #     operator = step.split("[")[0]
-        #
-        #     if operator in ["AGGREGATE", "COMPARISON", "GROUP", "ARITHMETIC", "SUPERLATIVE"]:
-        #         func = step.split("[")[1].split(",")[0][1:-1]
-        #         norm_operator = operator + "_" + func
-        #     else:
-        #         norm_operator = operator
-        #     normalized_operators.append(norm_operator)
-        # normalized_operators = tuple(normalized_operators)
+        operatortemplate2qids[operator_template].append(query_id)
 
         total_ques += 1
 
     print("Total questions: {}  Total program abstractions: {}".format(total_ques, len(operatortemplate2count)))
-    return qid2ques, operatortemplate2count, function2qids, qid2nestedexp
+    return qid2ques, operatortemplate2count, operatortemplate2qids, qid2nestedexp
 
 
-def train_dev_stats(train_optemplate2count, train_func2qids, dev_optemplate2count=None, dev_func2qids=None):
+def train_dev_stats(train_qid2ques, train_optemplate2count, train_optemplate2qids,
+                    dev_qid2ques, dev_optemplate2count=None, dev_optemplate2qids=None):
     train_templates = set(train_optemplate2count.keys())
     print("Train number of program templates: {}".format(len(train_templates)))
-    print("Train number of unique functions: {}".format(len(train_func2qids)))
+    # print("Train number of unique functions: {}".format(len(train_func2qids)))
     print()
+
+
 
     if dev_optemplate2count is not None:
         dev_templates = set(dev_optemplate2count.keys())
@@ -112,6 +113,15 @@ def train_dev_stats(train_optemplate2count, train_func2qids, dev_optemplate2coun
         print("Train / Dev common program templates (this disregards arguments): {}".format(len(train_dev_common)))
         print("Dev extra abstract program templates: {}".format(len(dev_extra_templates)))
     print()
+
+    template2count_sorted = sorted(train_optemplate2count.items(), key=lambda x: x[1], reverse=True)
+    for i in range(0, 10):
+        template, count = template2count_sorted[i]
+        print("{} {}".format(template, count))
+        for j in range(0, 5):
+            qid = train_optemplate2qids[template][j]
+            ques = train_qid2ques[qid]
+            print(ques)
 
 
 def write_example_programs_tsv(output_tsv_path, qid2ques, qid2nestedexp, func2qids):
@@ -149,15 +159,18 @@ def main(args):
 
 
 
-    train_qid2ques, train_optemplate2count, train_func2qids, train_qid2nestedexp = read_qdmr(train_qdmr_json)
-    dev_qid2ques, dev_optemplate2count, dev_func2qids, dev_qid2nestedexp = None, None, None, None
+    train_qid2ques, train_optemplate2count, train_optemplate2qids, train_qid2nestedexp = read_qdmr(
+        qdmr_examples=train_qdmr_examples)
+    dev_qid2ques, dev_optemplate2count, dev_optemplate2qids, dev_qid2nestedexp = None, None, None, None
     if dev_qdmr_json is not None:
-        dev_qid2ques, dev_optemplate2count, dev_func2qids, dev_qid2nestedexp = read_qdmr(dev_qdmr_json)
+        dev_qid2ques, dev_optemplate2count, dev_optemplate2qids, dev_qid2nestedexp = read_qdmr(
+            qdmr_examples=dev_qdmr_examples)
 
-    train_dev_stats(train_optemplate2count, train_func2qids,dev_optemplate2count, dev_func2qids)
+    train_dev_stats(train_qid2ques, train_optemplate2count, train_optemplate2qids,
+                    dev_qid2ques, dev_optemplate2count, dev_optemplate2qids)
 
-    if output_tsv_path:
-        write_example_programs_tsv(output_tsv_path, train_qid2ques, train_qid2nestedexp, train_func2qids)
+    # if output_tsv_path:
+    #     write_example_programs_tsv(output_tsv_path, train_qid2ques, train_qid2nestedexp, train_func2qids)
 
 
 if __name__ == "__main__":

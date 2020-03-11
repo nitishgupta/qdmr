@@ -1,131 +1,25 @@
-from typing import List, Dict, Tuple
-import os
+from typing import List
 import json
-from collections import defaultdict
-import random
 import argparse
 
-from allennlp_semparse.common.util import lisp_to_nested_expression
 from qdmr.domain_languages.qdmr_language import QDMRLanguage
-
+from qdmr.utils import Node, QDMRExample, nested_expression_to_lisp, nested_expression_to_tree, \
+    string_arg_to_quesspan_pred, read_qdmr_json_to_examples
 
 """
 *initial goal of this script; update after we actually implement this*
 This script takes QDMR programs parsed using parse_dataset.parse_qdmr and uses the grammar proposed in QDMRLanguage
 to see what programs can be produced from this grammar. This would require certain transformations due to quirks of the
-QDMR annotation. Also, not every program can be successfully mapped to a typed-grammar. Let see ...
+QDMR annotation. Also, not every program can be successfully mapped to a typed-grammar. 
+
+We're currently able to parse 7296/7519 program from DROP train
 """
 
 
-# QDMR_predicates = ["SELECT", "COMPARISON_max", "AGGREGATE_count", "COMPARISON_min", "ARITHMETIC_sum",
-#                    "ARITHMETIC_difference", "AGGREGATE_min", "PROJECT", "FILTER", "BOOLEAN", "COMPARATIVE",
-#                    "AGGREGATE_max", "UNION", "INTERSECTION", "DISCARD", "COMPARISON_true", "GROUP_count",
-#                    "AGGREGATE_sum", "ARITHMETIC_division", "SUPERLATIVE_min", "SUPERLATIVE_max", "AGGREGATE_avg",
-#                    "ARITHMETIC_multiplication", "GROUP_sum", "SELECT_NUM"]
-
 qdmr_langugage = QDMRLanguage()
-QDMR_predicates = list(qdmr_langugage._functions.keys())
-
-CASE3 = 0
-
-
-class QDMRExample():
-    def __init__(self, q_decomp):
-        self.query_id = q_decomp["question_id"]
-        self.question = q_decomp["question_text"]
-        self.program: List[str] = q_decomp["program"]
-        self.nested_expression: List = q_decomp["nested_expression"]
-        self.operators = q_decomp["operators"]
-        # This will filled by this script if transformation to QDMR-language is successful
-        self.typed_nested_expression: List = []
-
-
-    def to_json(self):
-        json_dict = {
-            "question_id": self.query_id,
-            "question_text": self.question,
-            "program": self.program,
-            "nested_expression": self.nested_expression,
-            "typed_nested_expression": self.typed_nested_expression,
-            "operators": self.operators
-        }
-        return json_dict
-
-
-class Node(object):
-    def __init__(self, predicate, string_arg=None):
-        self.predicate = predicate
-        self.string_arg = string_arg
-        # Empty list indicates leaf node
-        self.children: List[Node] = []
-        # parent==None indicates root
-        self.parent: Node = None
-
-    def add_child(self, obj):
-        assert isinstance(obj, Node)
-        obj.parent = self
-        self.children.append(obj)
-
-    def is_leaf(self):
-        leaf = True if not len(self.children) else False
-        return leaf
-
-    def get_nested_expression(self):
-        if not self.is_leaf():
-            nested_expression = [self.predicate]
-            for child in self.children:
-                nested_expression.append(child.get_nested_expression())
-            return nested_expression
-        else:
-            return self.predicate
-
-    def _get_nested_expression_with_strings(self):
-        """This nested expression is only used for human-readability and debugging. This is not a parsable program"""
-        string_or_predicate = self.string_arg if self.string_arg is not None else self.predicate
-        if not self.is_leaf():
-            nested_expression = [string_or_predicate]
-            for child in self.children:
-                nested_expression.append(child._get_nested_expression_with_strings())
-            return nested_expression
-        else:
-            return string_or_predicate
-
-
-def nested_expression_to_lisp(nested_expression):
-    if isinstance(nested_expression, str):
-        return nested_expression
-
-    elif isinstance(nested_expression, List):
-        lisp_expressions = [nested_expression_to_lisp(x) for x in nested_expression]
-        return "(" + " ".join(lisp_expressions) + ")"
-    else:
-        raise NotImplementedError
-
-
-
-def nested_expression_to_tree(nested_expression) -> Node:
-    if isinstance(nested_expression, str):
-        current_node = Node(predicate=nested_expression)
-
-    elif isinstance(nested_expression, list):
-        current_node = Node(nested_expression[0])
-        for i in range(1, len(nested_expression)):
-            child_node = nested_expression_to_tree(nested_expression[i])
-            current_node.add_child(child_node)
-    else:
-        raise NotImplementedError
-
-    return current_node
-
-
-def mask_string_argument_to_type(node: Node):
-    """Convert ques-string arguments to functions in QDMR to generic STRING() function."""
-    if node.predicate not in QDMR_predicates:
-        node.string_arg = node.predicate
-        node.predicate = "GET_QUESTION_SPAN"
-    for child in node.children:
-        mask_string_argument_to_type(child)
-    return node
+template2questionprogram = {}
+template2count = {}
+total_not_parsed = 0
 
 
 def is_project_select_node(node: Node):
@@ -162,7 +56,6 @@ def create_partial_group_node(count_or_sum: str, project_string_arg: str):
 
 
 def transform_to_fit_grammar(node: Node, question: str, top_level=False):
-    global CASE3
     """This function takes a program as a Tree, and converts predicates so the resulting program is type-conforming.
 
     QDMR, for example, could have a program such as, COMPARISON_max(SELECT, SELECT) which should ideally be
@@ -450,9 +343,6 @@ def transform_to_fit_grammar(node: Node, question: str, top_level=False):
 
     return node
 
-template2questionprogram = {}
-template2count = {}
-total_not_parsed = 0
 
 def parse_qdmr_program_into_language(question: str, nested_expression: List):
     global template2questionprogram
@@ -468,7 +358,7 @@ def parse_qdmr_program_into_language(question: str, nested_expression: List):
     """
     program_tree = nested_expression_to_tree(nested_expression)
     # Map string arguments to GET_QUESTION_SPAN predicate and move the string argument to node.string_arg
-    program_tree = mask_string_argument_to_type(node=program_tree)
+    program_tree = string_arg_to_quesspan_pred(node=program_tree)
 
     program_tree = transform_to_fit_grammar(program_tree, question, top_level=True)
     lisp_program = nested_expression_to_lisp(program_tree.get_nested_expression())
@@ -476,7 +366,6 @@ def parse_qdmr_program_into_language(question: str, nested_expression: List):
     try:
         qdmr_langugage.logical_form_to_action_sequence(lisp_program)
         return True, program_tree
-
     except:
         template = nested_expression_to_lisp(program_tree.get_nested_expression())
         program = program_tree._get_nested_expression_with_strings()
@@ -488,24 +377,6 @@ def parse_qdmr_program_into_language(question: str, nested_expression: List):
         total_not_parsed += 1
 
         return False, program_tree
-        # # print("Program cannot be parsed")
-        # # print(lisp_program)
-        # typed_program_tree = convert_to_type_conforming(program_tree)
-        # if typed_program_tree.data in ["ARITHMETIC_sum", "ARITHMETIC_difference", "ARITHMETIC_divison", "ARITHMETIC_multiplication"]:
-        #     nes_exp = typed_program_tree.get_nested_expression()
-        #     new_lisp_program = nested_expression_to_lisp(nes_exp)
-        #     try:
-        #         qdmr_langugage.logical_form_to_action_sequence(new_lisp_program)
-        #         print(lisp_program)
-        #         print(new_lisp_program)
-        #         return True
-        #         # print("Program cannot be parsed")
-        #         # print(lisp_program)
-        #         # print(new_lisp_program)
-        #     except:
-        #         return False
-
-
 
 
 def parse_qdmr_into_language(qdmr_examples: List[QDMRExample]) -> List[QDMRExample]:
@@ -544,48 +415,15 @@ def parse_qdmr_into_language(qdmr_examples: List[QDMRExample]) -> List[QDMRExamp
     return qdmr_examples
 
 
-
-def read_dataset(qdmr_json: str) -> List[QDMRExample]:
-    qdmr_examples = []
-    with open(qdmr_json, 'r') as f:
-        dataset = json.load(f)
-    for q_decomp in dataset:
-        qdmr_example = QDMRExample(q_decomp)
-        qdmr_examples.append(qdmr_example)
-    return qdmr_examples
-
-
 def main(args):
     qdmr_json_path = args.qdmr_json
-    qdmr_examples: List[QDMRExample] = read_dataset(qdmr_json_path)
+    qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(qdmr_json_path)
     qdmr_examples: List[QDMRExample] = parse_qdmr_into_language(qdmr_examples)
 
     examples_as_json_dicts = [example.to_json() for example in qdmr_examples]
 
     with open(qdmr_json_path, 'w') as outf:
         json.dump(examples_as_json_dicts, outf, indent=4)
-
-
-
-    # nested_expression = ['PROJECT', 'people of #REF', ['SELECT', 'nationalities registered in Bilbao']]
-    # node: Node = nested_expression_to_tree(nested_expression)
-    # node = mask_string_argument_to_type(node)
-    # lisp_program = nested_expression_to_lisp(nested_expression)
-    # nested_expression = ['SUPERLATIVE_max',
-    #                      ['SELECT', 'quarterbacks'],
-    #                      ['GROUP_count', ['PROJECT', 'touchdown passes of #REF', ['SELECT', 'quarterbacks']],
-    #                       ['SELECT', 'quarterbacks']]
-    #                      ]
-    # node: Node = nested_expression_to_tree(nested_expression)
-    # node = mask_string_argument_to_type(node)
-    # print(node._get_nested_expression_with_strings())
-    #
-    # print(len(node.children))
-    # print(node.children[0].predicate)
-    # print(node.children[1].predicate)
-    # print(is_project_select_node(node.children[1].children[0]))
-
-
 
 
 if __name__ == "__main__":
