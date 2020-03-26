@@ -7,13 +7,9 @@ import argparse
 from qdmr.utils import read_qdmr_json_to_examples, QDMRExample, Node, nested_expression_to_tree, \
     nested_expression_to_lisp, string_arg_to_quesspan_pred
 
+from qdmr import utils
+
 random.seed(28)
-
-
-
-
-train_qdmr_json = "/shared/nitishg/data/break-dataset/QDMR-high-level/json/DROP_train.json"
-dev_qdmr_json = "/shared/nitishg/data/break-dataset/QDMR-high-level/json/DROP_dev.json"
 
 
 def get_operators(nested_expression):
@@ -114,19 +110,52 @@ def train_dev_stats(train_optemplate2count, train_func2qids, dev_optemplate2coun
     print()
 
 
-def write_example_programs_tsv(output_tsv_path, qid2ques, qid2nestedexp, func2qids):
+
+def get_maps(qdmr_examples: List[QDMRExample]):
+    """ This data is processed using parse_dataset.parse_qdmr and keys in this json can be glanced at from there.
+
+    The nested_expression in the data makes life easier since functions are already normalized to their min/max, add/sub
+    identifier.
+
+    This function mainly reads relevant
+    """
+
+    qid2qdmrexample = {}
+    for qdmr_example in qdmr_examples:
+        qid2qdmrexample[qdmr_example.query_id] = qdmr_example
+
+
+    pred2qids = defaultdict(list)
+    for qdmr_example in qdmr_examples:
+        qid = qdmr_example.query_id
+        if not qdmr_example.typed_masked_nested_expr:
+            continue
+        func_set, template = utils.convert_nestedexpr_to_tuple(qdmr_example.typed_masked_nested_expr)
+        for pred in func_set:
+            pred2qids[pred].append(qid)
+
+    return qid2qdmrexample, pred2qids
+
+
+def write_example_programs_tsv(output_tsv_path,
+                               qid2qdmrexample: Dict[str, QDMRExample], pred2qids: Dict[str, List[str]]):
     """Write example (question, program) in TSV for Google Sheets.
 
     To ensure diversity, we first sample 10 questions for each function type.
     """
     print("Writing examples to TSV: {}".format(output_tsv_path))
     qid_ques_programs = []
-    for func, qids in func2qids.items():
+    for func, qids in pred2qids.items():
         print(func)
         random.shuffle(qids)
-        for i in range(0, min(20, len(qids))):
+        for i in range(0, min(15, len(qids))):
             qid = qids[i]
-            qid_ques_programs.append((func, qid, qid2ques[qid], qid2nestedexp[qid]))
+            qdmr_example = qid2qdmrexample[qid]
+            nested_expr = qdmr_example.program_tree._get_nested_expression_with_strings()
+            qid_ques_programs.append((func,
+                                      qid,
+                                      qdmr_example.question,
+                                      nested_expr))
 
     print("Total examples written: {}".format(len(qid_ques_programs)))
 
@@ -147,17 +176,21 @@ def main(args):
     train_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(train_qdmr_json)
     dev_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(dev_qdmr_json)
 
+    qid2qdmrexample, pred2qids = get_maps(train_qdmr_examples)
 
+    write_example_programs_tsv(output_tsv_path, qid2qdmrexample, pred2qids)
 
-    train_qid2ques, train_optemplate2count, train_func2qids, train_qid2nestedexp = read_qdmr(train_qdmr_json)
-    dev_qid2ques, dev_optemplate2count, dev_func2qids, dev_qid2nestedexp = None, None, None, None
-    if dev_qdmr_json is not None:
-        dev_qid2ques, dev_optemplate2count, dev_func2qids, dev_qid2nestedexp = read_qdmr(dev_qdmr_json)
-
-    train_dev_stats(train_optemplate2count, train_func2qids,dev_optemplate2count, dev_func2qids)
-
-    if output_tsv_path:
-        write_example_programs_tsv(output_tsv_path, train_qid2ques, train_qid2nestedexp, train_func2qids)
+    #
+    #
+    # train_qid2ques, train_optemplate2count, train_func2qids, train_qid2nestedexp = read_qdmr(train_qdmr_json)
+    # dev_qid2ques, dev_optemplate2count, dev_func2qids, dev_qid2nestedexp = None, None, None, None
+    # if dev_qdmr_json is not None:
+    #     dev_qid2ques, dev_optemplate2count, dev_func2qids, dev_qid2nestedexp = read_qdmr(dev_qdmr_json)
+    #
+    # train_dev_stats(train_optemplate2count, train_func2qids,dev_optemplate2count, dev_func2qids)
+    #
+    # if output_tsv_path:
+    #     write_example_programs_tsv(output_tsv_path, train_qid2ques, train_qid2nestedexp, train_func2qids)
 
 
 if __name__ == "__main__":

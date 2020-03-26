@@ -31,6 +31,7 @@ def get_operators(nested_expression):
 
 
 def convert_nestedexpr_to_tuple(nested_expression):
+    """Converts a nested expression list into a nested expression tuple to make the program hashable."""
     new_nested = []
     for i, argument in enumerate(nested_expression):
         if i == 0:
@@ -44,7 +45,6 @@ def convert_nestedexpr_to_tuple(nested_expression):
     return tuple(new_nested)
 
 
-
 def read_qdmr(qdmr_examples: List[QDMRExample]):
     """ This data is processed using parse_dataset.parse_qdmr and keys in this json can be glanced at from there.
 
@@ -52,9 +52,6 @@ def read_qdmr(qdmr_examples: List[QDMRExample]):
     identifier.
 
     This function mainly reads relevant
-
-    :param qdmr_json:
-    :return:
     """
     total_ques = 0
     total_super = 0
@@ -77,12 +74,11 @@ def read_qdmr(qdmr_examples: List[QDMRExample]):
         if not len(typed_nested_expression):
             continue
 
-        program_tree = nested_expression_to_tree(typed_nested_expression)
-        program_tree = string_arg_to_quesspan_pred(node=program_tree)
+        program_tree = qdmr_example.program_tree
         masked_nested_expr = program_tree.get_nested_expression()
 
         # function_names, operator_template = get_operators(masked_nested_expr)
-        operator_template = convert_nestedexpr_to_tuple(masked_nested_expr) # tuple(operator_template)
+        operator_template = convert_nestedexpr_to_tuple(masked_nested_expr)
 
         qid2ques[query_id] = question
         qid2optemplate[query_id] = operator_template
@@ -99,10 +95,15 @@ def read_qdmr(qdmr_examples: List[QDMRExample]):
 def train_dev_stats(train_qid2ques, train_optemplate2count, train_optemplate2qids,
                     dev_qid2ques, dev_optemplate2count=None, dev_optemplate2qids=None):
     train_templates = set(train_optemplate2count.keys())
-    print("Train number of program templates: {}".format(len(train_templates)))
-    # print("Train number of unique functions: {}".format(len(train_func2qids)))
-    print()
+    print("Train number of program templates: {}\n".format(len(train_templates)))
 
+    count2numtemplates = defaultdict(int)
+    for template, count in train_optemplate2count.items():
+        count2numtemplates[count] += 1
+
+    count2numtemplates_sorted = sorted(count2numtemplates.items(), key=lambda x: x[0], reverse=True)
+    print("Train count_of_template vs. number of templates with that count -- ")
+    print("{}\n".format(count2numtemplates_sorted))
 
 
     if dev_optemplate2count is not None:
@@ -152,11 +153,8 @@ def main(args):
     train_qdmr_json = args.train_qdmr_json
     dev_qdmr_json = args.dev_qdmr_json
 
-    output_tsv_path = args.output_tsv_path
-
     train_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(train_qdmr_json)
     dev_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(dev_qdmr_json)
-
 
 
     train_qid2ques, train_optemplate2count, train_optemplate2qids, train_qid2nestedexp = read_qdmr(
@@ -169,15 +167,16 @@ def main(args):
     train_dev_stats(train_qid2ques, train_optemplate2count, train_optemplate2qids,
                     dev_qid2ques, dev_optemplate2count, dev_optemplate2qids)
 
-    # if output_tsv_path:
+    # output_tsv_path = args.output_tsv_path
+    # if args.output_tsv_path:
     #     write_example_programs_tsv(output_tsv_path, train_qid2ques, train_qid2nestedexp, train_func2qids)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_qdmr_json")
-    parser.add_argument("--dev_qdmr_json")
-    parser.add_argument("--output_tsv_path")
+    parser.add_argument("--train_qdmr_json", required=True)
+    parser.add_argument("--dev_qdmr_json", default=None)
+    parser.add_argument("--output_tsv_path", default=None)
     args = parser.parse_args()
 
     main(args)

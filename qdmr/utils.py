@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import List, Tuple, Set
 
 from qdmr.domain_languages.qdmr_language import QDMRLanguage
 
@@ -58,6 +58,11 @@ class QDMRExample(object):
         self.typed_nested_expression: List = []
         if "typed_nested_expression" in q_decomp:
             self.typed_nested_expression = q_decomp["typed_nested_expression"]
+        self.program_tree: Node = None
+        self.typed_masked_nested_expr = []
+        if self.typed_nested_expression:
+            self.program_tree = string_arg_to_quesspan_pred(nested_expression_to_tree(self.typed_nested_expression))
+            self.typed_masked_nested_expr = self.program_tree.get_nested_expression()
 
     def to_json(self):
         json_dict = {
@@ -69,6 +74,23 @@ class QDMRExample(object):
             "operators": self.operators
         }
         return json_dict
+
+
+def read_qdmr_json_to_examples(qdmr_json: str) -> List[QDMRExample]:
+    """Parse processed qdmr json (from parse_dataset/parse_qdmr.py or qdmr_grammar_program.py into List[QDMRExample]"""
+    qdmr_examples = []
+    with open(qdmr_json, 'r') as f:
+        dataset = json.load(f)
+    for q_decomp in dataset:
+        qdmr_example = QDMRExample(q_decomp)
+        qdmr_examples.append(qdmr_example)
+    return qdmr_examples
+
+
+def write_qdmr_examples_to_json(qdmr_examples: List[QDMRExample], qdmr_json: str):
+    examples_as_json_dicts = [example.to_json() for example in qdmr_examples]
+    with open(qdmr_json, 'w') as outf:
+        json.dump(examples_as_json_dicts, outf, indent=4)
 
 
 def nested_expression_to_lisp(nested_expression):
@@ -107,11 +129,19 @@ def string_arg_to_quesspan_pred(node: Node):
     return node
 
 
-def read_qdmr_json_to_examples(qdmr_json: str) -> List[QDMRExample]:
-    qdmr_examples = []
-    with open(qdmr_json, 'r') as f:
-        dataset = json.load(f)
-    for q_decomp in dataset:
-        qdmr_example = QDMRExample(q_decomp)
-        qdmr_examples.append(qdmr_example)
-    return qdmr_examples
+def convert_nestedexpr_to_tuple(nested_expression) -> Tuple[Set[str], Tuple]:
+    """Converts a nested expression list into a nested expression tuple to make the program hashable."""
+    function_names = set()
+    new_nested = []
+    for i, argument in enumerate(nested_expression):
+        if i == 0:
+            function_names.add(argument)
+            new_nested.append(argument)
+        else:
+            if isinstance(argument, list):
+                func_set, tupled_nested = convert_nestedexpr_to_tuple(argument)
+                function_names.update(func_set)
+                new_nested.append(tupled_nested)
+            else:
+                new_nested.append(argument)
+    return function_names, tuple(new_nested)

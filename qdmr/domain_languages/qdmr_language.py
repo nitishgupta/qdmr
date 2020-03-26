@@ -168,14 +168,10 @@ class QDMRLanguage(DomainLanguage):
         pass
 
     @predicate
-    def AGGREGATE_avg(self, s: Set[PassageSpan]) -> Number:
+    def AGGREGATE_avg(self, s: Set[PassageSpan]) -> Set[Number]:
         """Similar to AGGREGATE_sum"""
         pass
 
-
-    """
-    # TODO(nitish): fix everything below
-    """
     @predicate
     def CONDITION(self, question_span: QuestionSpan) -> Number2Bool:
         pass
