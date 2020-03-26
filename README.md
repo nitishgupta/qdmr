@@ -63,3 +63,11 @@ python -m parse_dataset.template_split \
     --tmp_split_train_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/template_based_split/DROP/train.json \
     --tmp_split_test_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/template_based_split/DROP/test.json
 ```
+
+## TSV Examples for Grammar Programs -- `analysis/qdmr_program_diversity.py`
+Write examples of programs for each predicate in the dataset to a TSV file.
+```
+python -m analysis.qdmr_program_diversity \
+  --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/train.json \
+  --output_tsv_path /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/examples.tsv
+```
