@@ -5,9 +5,9 @@ import random
 import argparse
 from collections import defaultdict
 
-from qdmr.utils import read_qdmr_json_to_examples, QDMRExample, convert_nestedexpr_to_tuple
+from qdmr.data.utils import read_qdmr_json_to_examples, QDMRExample, convert_nestedexpr_to_tuple
 
-from qdmr import utils
+from qdmr.data import utils
 
 random.seed(1)
 
@@ -35,13 +35,14 @@ def funcs_in_templates(templates: List[str], template2functions: Dict[str, Set[s
     return func_set
 
 
-def template_based_split(train_qdmr_examples: List[QDMRExample], dev_qdmr_examples: List[QDMRExample]):
+def template_based_split(train_qdmr_examples: List[QDMRExample], dev_qdmr_examples: List[QDMRExample],
+                         train_ratio: float):
     """ This data is processed using parse_dataset.parse_qdmr and keys in this json can be glanced at from there.
 
     The nested_expression in the data makes life easier since functions are already normalized to their min/max, add/sub
     identifier.
 
-    This function mainly reads relevant
+    train_ratio: ``float`` Is the ratio of train_ques to total questions available
     """
 
     # Merge original train and dev to make new splits
@@ -63,7 +64,7 @@ def template_based_split(train_qdmr_examples: List[QDMRExample], dev_qdmr_exampl
         template2qids[template].append(qdmr_example.query_id)
 
     total_num_ques = len(qdmr_examples)
-    target_train_num_ques = int(0.8 * total_num_ques)
+    target_train_num_ques = int(train_ratio * total_num_ques)
     template_list = list(template2qids.keys())
 
     print("Number of total functions: {}".format(len(all_functions_set)))
@@ -87,9 +88,9 @@ def template_based_split(train_qdmr_examples: List[QDMRExample], dev_qdmr_exampl
         tr_func_set: Set[str] = funcs_in_templates(templates=tr_templates, template2functions=template2functions)
         if len(tr_func_set) < len(all_functions_set):
             continue
-        dev_templates = list(set(template2count.keys()).difference(set(tr_templates)))
-        dev_func_set: Set[str] = funcs_in_templates(templates=dev_templates, template2functions=template2functions)
-        num_dev_funcs = len(dev_func_set)
+        test_templates = list(set(template2count.keys()).difference(set(tr_templates)))
+        test_func_set: Set[str] = funcs_in_templates(templates=test_templates, template2functions=template2functions)
+        num_dev_funcs = len(test_func_set)
 
         all_train_splits.append(tr_templates)
         diff_to_target = abs(target_train_num_ques - num_tr_ques)
@@ -106,26 +107,47 @@ def template_based_split(train_qdmr_examples: List[QDMRExample], dev_qdmr_exampl
     print("Number of train templates: {}".format(len(train_templates)))
     print("Number of total functions in train: {}".format(len(tr_func_set)))
 
-    dev_templates = list(set(template2count.keys()).difference(set(train_templates)))
-    dev_func_set: Set[str] = funcs_in_templates(templates=dev_templates, template2functions=template2functions)
-    print("Number of dev templates: {}".format(len(dev_templates)))
-    print("Number of dev functions: {}".format(len(dev_func_set)))
+    test_templates = list(set(template2count.keys()).difference(set(train_templates)))
+    test_func_set: Set[str] = funcs_in_templates(templates=test_templates, template2functions=template2functions)
+    print("Number of test templates: {}".format(len(test_templates)))
+    print("Number of test functions: {}".format(len(test_func_set)))
 
-    print("Function not in dev: {}".format(tr_func_set.difference(dev_func_set)))
+    print("Function not in test: {}".format(tr_func_set.difference(test_func_set)))
 
     train_qids = []
     train_qdmrs = []
+    # In-domain dev set
+    dev_in_qids = []
+    dev_in_qdmrs = []
     for t in train_templates:
-        train_qids.extend(template2qids[t])
-        train_qdmrs.extend([qid2qdmrexample[qid] for qid in template2qids[t]])
+        t_qids = template2qids[t]
+        # Split qids for this template into 0.9/0.1 for train/dev-in
+        t_dev_qids = t_qids[0:int(0.1 * len(t_qids))]
+        t_train_qids = t_qids[int(0.1 * len(t_qids)):]
+        train_qids.extend(t_train_qids)
+        dev_in_qids.extend(t_dev_qids)
+        train_qdmrs.extend([qid2qdmrexample[qid] for qid in t_train_qids])
+        dev_in_qdmrs.extend([qid2qdmrexample[qid] for qid in t_dev_qids])
 
     test_qids = []
     test_qdmrs = []
-    for t in dev_templates:
-        test_qids.extend(template2qids[t])
-        test_qdmrs.extend([qid2qdmrexample[qid] for qid in template2qids[t]])
+    # Out-of-domain dev set
+    dev_out_qids = []
+    dev_out_qdmrs = []
+    for t in test_templates:
+        t_qids = template2qids[t]
+        # Split qids for this template into 0.1/0.9 for dev-out/test
+        t_dev_qids = t_qids[0:int(0.1 * len(t_qids))]
+        t_test_qids = t_qids[int(0.1 * len(t_qids)):]
+        dev_out_qids.extend(t_dev_qids)
+        test_qids.extend(t_test_qids)
+        dev_out_qdmrs.extend([qid2qdmrexample[qid] for qid in t_dev_qids])
+        test_qdmrs.extend([qid2qdmrexample[qid] for qid in t_test_qids])
 
-    return train_qdmrs, test_qdmrs
+    print(f"Number of questions; train:{len(train_qdmrs)} dev-in:{len(dev_in_qdmrs)} "
+          f"dev-out:{len(dev_out_qdmrs)} test:{len(test_qdmrs)}")
+
+    return train_qdmrs, dev_in_qdmrs, dev_out_qdmrs, test_qdmrs
 
 
 def main(args):
@@ -135,26 +157,35 @@ def main(args):
     train_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(train_qdmr_json)
     dev_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(dev_qdmr_json)
 
-    tmp_based_train_qdmrs, tmp_based_test_qdmrs = template_based_split(train_qdmr_examples, dev_qdmr_examples)
+    (tmp_based_train_qdmrs,
+     tmp_based_dev_in_qdmrs,
+     tmp_based_dev_out_qdmrs,
+     tmp_based_test_qdmrs) = template_based_split(train_qdmr_examples, dev_qdmr_examples, train_ratio=args.train_ratio)
 
-    output_dir = os.path.split(args.tmp_split_train_qdmr_json)[0]
-    print("Writing output to: {}".format(output_dir))
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir, exist_ok=True)
+    # In the args.tmp_split_dir directory write 4 files -- train.json, dev-in.json, dev-out.json, test.json
+    print("Writing output to: {}".format(args.tmp_split_dir))
+    if not os.path.exists(args.tmp_split_dir):
+        os.makedirs(args.tmp_split_dir, exist_ok=True)
 
     utils.write_qdmr_examples_to_json(qdmr_examples=tmp_based_train_qdmrs,
-                                      qdmr_json=args.tmp_split_train_qdmr_json)
+                                      qdmr_json=os.path.join(args.tmp_split_dir, "train.json"))
+
+    utils.write_qdmr_examples_to_json(qdmr_examples=tmp_based_dev_in_qdmrs,
+                                      qdmr_json=os.path.join(args.tmp_split_dir, "dev-in.json"))
+
+    utils.write_qdmr_examples_to_json(qdmr_examples=tmp_based_dev_out_qdmrs,
+                                      qdmr_json=os.path.join(args.tmp_split_dir, "dev-out.json"))
 
     utils.write_qdmr_examples_to_json(qdmr_examples=tmp_based_test_qdmrs,
-                                      qdmr_json=args.tmp_split_test_qdmr_json)
+                                      qdmr_json=os.path.join(args.tmp_split_dir, "test.json"))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_qdmr_json", required=True)
     parser.add_argument("--dev_qdmr_json", required=True)
-    parser.add_argument("--tmp_split_train_qdmr_json")
-    parser.add_argument("--tmp_split_test_qdmr_json")
+    parser.add_argument("--tmp_split_dir", required=True)
+    parser.add_argument("--train_ratio", type=float, default=0.8)
 
     args = parser.parse_args()
 

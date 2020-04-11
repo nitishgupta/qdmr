@@ -3,9 +3,9 @@ from collections import defaultdict
 import random
 import argparse
 
-from qdmr.utils import read_qdmr_json_to_examples, QDMRExample
+from qdmr.data.utils import read_qdmr_json_to_examples, QDMRExample
 
-from qdmr import utils
+from qdmr.data import utils
 
 random.seed(28)
 

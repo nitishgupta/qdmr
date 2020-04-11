@@ -6,8 +6,6 @@ from qdmr.domain_languages.qdmr_language import QDMRLanguage
 qdmr_langugage = QDMRLanguage()
 QDMR_predicates = list(qdmr_langugage._functions.keys())
 
-
-
 class Node(object):
     def __init__(self, predicate, string_arg=None):
         self.predicate = predicate
@@ -51,23 +49,29 @@ class QDMRExample(object):
     def __init__(self, q_decomp):
         self.query_id = q_decomp["question_id"]
         self.question = q_decomp["question_text"]
+        self.split = q_decomp["split"]
+        self.decomposition = q_decomp["decomposition"]
         self.program: List[str] = q_decomp["program"]
         self.nested_expression: List = q_decomp["nested_expression"]
         self.operators = q_decomp["operators"]
         # Filled by parse_dataset/qdmr_grammar_program.py if transformation to QDMR-language is successful
+        # This contains string-args as it is
         self.typed_nested_expression: List = []
         if "typed_nested_expression" in q_decomp:
             self.typed_nested_expression = q_decomp["typed_nested_expression"]
         self.program_tree: Node = None
         self.typed_masked_nested_expr = []
         if self.typed_nested_expression:
-            self.program_tree = string_arg_to_quesspan_pred(nested_expression_to_tree(self.typed_nested_expression))
+            self.program_tree: Node = string_arg_to_quesspan_pred(nested_expression_to_tree(self.typed_nested_expression))
+            # This contains string-args masked as GET_QUESTION_SPAN predicate
             self.typed_masked_nested_expr = self.program_tree.get_nested_expression()
 
     def to_json(self):
         json_dict = {
             "question_id": self.query_id,
             "question_text": self.question,
+            "split": self.split,
+            "decomposition": self.decomposition,
             "program": self.program,
             "nested_expression": self.nested_expression,
             "typed_nested_expression": self.typed_nested_expression,
@@ -100,6 +104,30 @@ def nested_expression_to_lisp(nested_expression):
     elif isinstance(nested_expression, List):
         lisp_expressions = [nested_expression_to_lisp(x) for x in nested_expression]
         return "(" + " ".join(lisp_expressions) + ")"
+    else:
+        raise NotImplementedError
+
+
+def nested_expression_to_linearized_list(nested_expression, open_bracket: str = "(",
+                                         close_bracket: str = ")") -> List[str]:
+    """Convert the program (as nested expression) into a linearized expression.
+
+        The natural language arguments in the program are kept intact as a single program `token` and it is the onus of
+        the processing step after this to tokenize them
+    """
+    if isinstance(nested_expression, str):
+        # If the string is not a predicate but a NL argument, it is the onus of the models to tokenize it appropriately
+        return [nested_expression]
+
+    elif isinstance(nested_expression, List):
+        # Flattened list of tokens for each element in the list
+        program_tokens = []
+        for x in nested_expression:
+            program_tokens.extend(nested_expression_to_linearized_list(x, open_bracket, close_bracket))
+        # Inserting a bracket around the program tokens
+        program_tokens.insert(0, open_bracket)
+        program_tokens.append(close_bracket)
+        return program_tokens
     else:
         raise NotImplementedError
 
@@ -145,3 +173,20 @@ def convert_nestedexpr_to_tuple(nested_expression) -> Tuple[Set[str], Tuple]:
             else:
                 new_nested.append(argument)
     return function_names, tuple(new_nested)
+
+
+if __name__ == "__main__":
+    p = [
+        "COMPARISON_count_max",
+        [
+            "SELECT",
+            "people killed According to official reports"
+        ],
+        [
+            "SELECT",
+            "people wounded According to official reports"
+        ]
+    ]
+
+
+    print(nested_expression_to_linearized_list(p))

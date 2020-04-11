@@ -3,7 +3,7 @@ import json
 import argparse
 
 from qdmr.domain_languages.qdmr_language import QDMRLanguage
-from qdmr.utils import Node, QDMRExample, nested_expression_to_lisp, nested_expression_to_tree, \
+from qdmr.data.utils import Node, QDMRExample, nested_expression_to_lisp, nested_expression_to_tree, \
     string_arg_to_quesspan_pred, read_qdmr_json_to_examples
 
 """

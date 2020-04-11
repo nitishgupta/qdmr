@@ -1,11 +1,9 @@
-from typing import List, Dict
-import json
+from typing import List
 from collections import defaultdict
 import random
 import argparse
 
-from qdmr.utils import read_qdmr_json_to_examples, QDMRExample, Node, nested_expression_to_tree, \
-    nested_expression_to_lisp, string_arg_to_quesspan_pred
+from qdmr.data.utils import read_qdmr_json_to_examples, QDMRExample
 
 random.seed(28)
 

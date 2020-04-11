@@ -5,13 +5,27 @@ The script `parse_dataset/parse_qdmr.py` coverts break-csv into a json file with
 along with program (as parsed by Tomer's code) and it's nested expression.
 
 ```
-# DROP
-python -m parse_dataset.parse_qdmr --qdmr_csv /shared/nitishg/data/Break-dataset/QDMR-high-level/train.csv --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/train.json --dataset DROP
-python -m parse_dataset.parse_qdmr --qdmr_csv /shared/nitishg/data/Break-dataset/QDMR-high-level/dev.csv --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/dev.json --dataset DROP
+## DROP ##
+python -m parse_dataset.parse_qdmr \
+    --qdmr_csv /shared/nitishg/data/Break-dataset/QDMR-high-level/train.csv \
+    --dataset DROP \
+    --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/standard-split/train.json
+ 
+python -m parse_dataset.parse_qdmr \
+    --qdmr_csv /shared/nitishg/data/Break-dataset/QDMR-high-level/dev.csv \
+    --dataset DROP \
+    --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/standard-split/dev.json 
 
-# HOTPOTQA
-python -m parse_dataset.parse_qdmr --qdmr_csv /shared/nitishg/data/Break-dataset/QDMR-high-level/train.csv --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/HOTPOT/train.json --dataset HOTPOT
-python -m parse_dataset.parse_qdmr --qdmr_csv /shared/nitishg/data/Break-dataset/QDMR-high-level/dev.csv --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/HOTPOT/dev.json --dataset HOTPOT
+## HOTPOTQA ##
+python -m parse_dataset.parse_qdmr \
+    --qdmr_csv /shared/nitishg/data/Break-dataset/QDMR-high-level/train.csv \
+    --dataset HOTPOT \
+    --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/HOTPOT/standard-split/train.json 
+
+python -m parse_dataset.parse_qdmr \
+    --qdmr_csv /shared/nitishg/data/Break-dataset/QDMR-high-level/dev.csv \
+    --dataset HOTPOT \
+    --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/HOTPOT/standard-split/dev.json 
 ```
 
 The output json file contains a list of instances as dict where each contains the following keys:
@@ -47,7 +61,15 @@ By analyzing DROP-programs we come up with a language to parse DROP programs int
 (`qdmr/domain_languages/qdmr_language.py`)
 
 The script `parse_dataset/qdmr_grammar_program.py` takes as input from the `parse_qdmr.py` script
-and adds the field `typed_nested_expression` to the same json file.
+and adds the following field to the same json file: ```typed_nested_expression``` 
+
+```
+python -m parse_dataset.qdmr_grammar_program \
+    --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/HOTPOT/standard-split/train.json
+
+python -m parse_dataset.qdmr_grammar_program \
+    --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/HOTPOT/standard-split/dev.json
+```
 
 ## Template-based Data Split -- `parse_dataset/template_split.py`
 The script `parse_dataset/template_split.py` re-splits the train/dev DROP data based on program-templates.
@@ -56,12 +78,15 @@ The split ensures that the abstract-program-templates in train and test are disj
 2. All predicates/functions that are in the dataset appear in train templates
 3. The test set contains the maximum number of functions/predicates
 
+This script makes 4 splits, `train.json`, `dev-in.json`, `dev-out.json` and `test.json` -- where 
+`dev-in.json` is a in-domain dev set (10% of train) and 
+`dev-out.json` is a dev set from the test templates (10% of test)
+
 ```
 python -m parse_dataset.template_split \
-    --train_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/train.json \
-    --dev_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/dev.json \
-    --tmp_split_train_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/template_based_split/DROP/train.json \
-    --tmp_split_test_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/template_based_split/DROP/test.json
+    --train_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/standard-split/train.json \
+    --dev_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/standard-split/dev.json \
+    --tmp_split_dir /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/template-split
 ```
 
 ## TSV Examples for Grammar Programs -- `analysis/qdmr_program_diversity.py`
