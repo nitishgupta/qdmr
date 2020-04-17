@@ -3,6 +3,8 @@ local utils = import 'utils.libsonnet';
 local epochs = utils.parse_number(std.extVar("EPOCHS"));
 local batch_size = utils.parse_number(std.extVar("BATCH_SIZE"));
 local seed = utils.parse_number(std.extVar("SEED"));
+local glove_path = std.extVar("GLOVE");
+local glove_size = utils.parse_number(std.extVar("GLOVE_EMB_DIM"));
 
 local trainfile = std.extVar("TRAIN_FILE");
 local devfile = std.extVar("DEV_FILE");
@@ -18,10 +20,13 @@ local devfile = std.extVar("DEV_FILE");
       "split_on_spaces": true
     },
     "source_token_indexers": {
+      "elmo": {
+        "type": "elmo_characters"
+      },
       "tokens": {
         "type": "single_id",
-        "namespace": "source_tokens"
-      }
+          "namespace": "source_tokens"
+        }
     },
     "target_token_indexers": {
       "tokens": {
@@ -40,16 +45,23 @@ local devfile = std.extVar("DEV_FILE");
       "token_embedders": {
         "tokens": {
           "type": "embedding",
-          "pretrained_file": "https://allennlp.s3.amazonaws.com/datasets/glove/glove.840B.300d.txt.gz",
+          "pretrained_file": glove_path,
           "vocab_namespace": "source_tokens",
-          "embedding_dim": 300,
+          "embedding_dim": glove_size,
           "trainable": false
+        },
+        "elmo": {
+          "type": "elmo_token_embedder",
+          "options_file": "https://allennlp.s3.amazonaws.com/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json",
+          "weight_file": "https://allennlp.s3.amazonaws.com/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5",
+          "do_layer_norm": false,
+          "dropout": 0.0
         }
       }
     },
     "encoder": {
       "type": "lstm",
-      "input_size": 300,
+      "input_size": 1324,
       "hidden_size": 100,
       "num_layers": 1,
       "bidirectional": true,
@@ -80,7 +92,7 @@ local devfile = std.extVar("DEV_FILE");
     "patience": 10,
     "cuda_device": 0,
     "grad_clipping": 5.0,
-    "validation_metric": "+BLEU",
+    "validation_metric": "+exact_match",
     "optimizer": {
       "type": "adam",
       "lr": 1e-3

@@ -14,7 +14,7 @@ from allennlp.models.model import Model
 from allennlp.modules.token_embedders import Embedding
 from allennlp.nn import util
 from allennlp.nn.beam_search import BeamSearch
-from allennlp.training.metrics import BLEU
+from allennlp.training.metrics import BLEU, Average
 
 """
 Copy from (github.com/allenai/allennlp-models/blob/master/allennlp_models/seq2seq/simple_seq2seq_model.py)
@@ -102,6 +102,8 @@ class SimpleSeq2Seq(Model):
             )
         else:
             self._bleu = None
+
+        self._exact_match = Average()
 
         # At prediction time, we use a beam search to find the most likely sequence of target tokens.
         beam_size = beam_size or 1
@@ -229,12 +231,34 @@ class SimpleSeq2Seq(Model):
             state = self._init_decoder_state(state)
             predictions = self._forward_beam_search(state)
             output_dict.update(predictions)
+            exact_matches = None
             if target_tokens and self._bleu:
                 # shape: (batch_size, beam_size, max_sequence_length)
                 top_k_predictions = output_dict["predictions"]
                 # shape: (batch_size, max_predicted_sequence_length)
                 best_predictions = top_k_predictions[:, 0, :]
                 self._bleu(best_predictions, target_tokens["tokens"]["tokens"])
+                # Using 2nd token and beyond for gold since the prediction does not contain @start@ token
+                exact_matches = self.exact_match_sequences(predicted_indices=best_predictions,
+                                                           gold_indices=target_tokens["tokens"]["tokens"][:, 1:])
+
+            if metadata is not None:
+                questions: List[str] = []
+                query_ids: List[str] = []
+                question_tokens: List[List[str]] = []
+                gold_program_tokens: List[List[str]] = []
+                for i in range(0, len(metadata)):
+                    questions.append(metadata[i]["question"])
+                    query_ids.append(metadata[i]["query_id"])
+                    question_tokens.append(metadata[i]["utterance_tokens"])
+                    if "target_tokens" in metadata[i]:
+                        gold_program_tokens.append(metadata[i]["target_tokens"])
+
+                output_dict["question"] = questions
+                output_dict["query_id"] = query_ids
+                output_dict["question_tokens"] = question_tokens
+                output_dict["gold_program_tokens"] = gold_program_tokens
+                output_dict["exact_match"] = exact_matches
 
         return output_dict
 
@@ -272,6 +296,50 @@ class SimpleSeq2Seq(Model):
             all_predicted_tokens.append(predicted_tokens)
         output_dict["predicted_tokens"] = all_predicted_tokens
         return output_dict
+
+    def exact_match_sequences(self, predicted_indices, gold_indices):
+        exact_matches = []
+        if not isinstance(predicted_indices, numpy.ndarray):
+            predicted_indices = predicted_indices.detach().cpu().numpy()
+        if not isinstance(gold_indices, numpy.ndarray):
+            gold_indices = gold_indices.detach().cpu().numpy()
+        for p_indices, g_indices in zip(predicted_indices, gold_indices):
+            p_indices = list(p_indices)
+            g_indices = list(g_indices)
+            if self._end_index in p_indices:
+                p_indices = p_indices[: p_indices.index(self._end_index)]
+            if self._end_index in g_indices:
+                g_indices = g_indices[: g_indices.index(self._end_index)]
+            if len(p_indices) == len(g_indices):
+                correct = int(all([x == y for x, y in zip(p_indices, g_indices)]))
+            else:
+                correct = 0
+            self._exact_match(value=correct)
+            exact_matches.append(correct)
+        return exact_matches
+
+    def get_sequence_indices_and_tokens(self, batch_sequences):
+        if not isinstance(batch_sequences, numpy.ndarray):
+            batch_sequences = batch_sequences.detach().cpu().numpy()
+            # Shape of batch_sequences: (batch_size, sequence_length)
+            assert len(batch_sequences.shape) == 2
+            batch_sequences = batch_sequences.tolist()
+        batch_indices = []
+        batch_tokens = []
+        longest_sequence = -1
+        for i in range(0, len(batch_sequences)):
+            indices = batch_sequences[i]
+            # Collect indices till the first end_symbol
+            if self._end_index in indices:
+                indices = indices[: indices.index(self._end_index)]
+            tokens = [
+                self.vocab.get_token_from_index(x, namespace=self._target_namespace)
+                for x in indices
+            ]
+            longest_sequence = len(indices) if len(indices) > longest_sequence else longest_sequence
+            batch_indices.append(indices)
+            batch_tokens.append(tokens)
+        return batch_indices, batch_tokens, longest_sequence
 
     def _encode(self, source_tokens: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # shape: (batch_size, max_input_sequence_length, encoder_input_dim)
@@ -504,6 +572,9 @@ class SimpleSeq2Seq(Model):
     @overrides
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         all_metrics: Dict[str, float] = {}
-        if self._bleu and not self.training:
-            all_metrics.update(self._bleu.get_metric(reset=reset))
+        if not self.training:
+            exact_match = self._exact_match.get_metric(reset=reset)
+            all_metrics.update({'exact_match': exact_match})
+            if self._bleu:
+                all_metrics.update(self._bleu.get_metric(reset=reset))
         return all_metrics

@@ -85,7 +85,7 @@ local bert_dim = 768;  // uniquely determined by bert_model
     "patience": 10,
     "cuda_device": 0,
     "grad_clipping": 5.0,
-    "validation_metric": "+BLEU",
+    "validation_metric": "+exact_match",
     // Weight decay from allennlp-models/training_config/syntax/bert_base_srl.jsonnet. E.g. rc/transformer_qa.jsonnet
     "optimizer": {
      "type": "huggingface_adamw",

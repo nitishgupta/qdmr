@@ -203,7 +203,7 @@ class QDMRLanguage(DomainLanguage):
     @predicate
     def SUPERLATIVE_min(self, s: Set[PassageSpan], passage2num: Passage2Number) -> Set[PassageSpan]:
         """Given a set of passage spans and a function that maps a span to a number, output the span w/ the largest num
-        Needs to implement 'max' within this predicate itself.
+        Needs to implement 'min' within this predicate itself.
         """
         pass
 
