@@ -11,6 +11,8 @@ from qdmr.data import utils
 
 random.seed(1)
 
+""" Split the original Break-annotation into train/dev/test. The original data only comes with train & dev """
+
 
 def select_train_templates(target_train_num_ques: int, template_list: List[str],
                            template2count: Dict[str, int]):
@@ -135,7 +137,7 @@ def template_based_split(train_qdmr_examples: List[QDMRExample], dev_qdmr_exampl
     # Out-of-domain dev set
     dev_out_qids = []
     dev_out_qdmrs = []
-    test_dev_out_ratio = 0.20
+    test_dev_out_ratio = 0.15
     for t in test_templates:
         t_qids = template2qids[t]
         # Split qids for this template into 0.1/0.9 for dev-out/test
@@ -156,38 +158,41 @@ def main(args):
     train_qdmr_json = args.train_qdmr_json
     dev_qdmr_json = args.dev_qdmr_json
 
+    std_split_dir = args.std_split_dir
+
     train_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(train_qdmr_json)
     dev_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(dev_qdmr_json)
 
-    (tmp_based_train_qdmrs,
-     tmp_based_dev_in_qdmrs,
-     tmp_based_dev_out_qdmrs,
-     tmp_based_test_qdmrs) = template_based_split(train_qdmr_examples, dev_qdmr_examples, train_ratio=args.train_ratio)
 
-    # In the args.tmp_split_dir directory write 4 files -- train.json, dev-in.json, dev-out.json, test.json
-    print("Writing output to: {}".format(args.tmp_split_dir))
-    if not os.path.exists(args.tmp_split_dir):
-        os.makedirs(args.tmp_split_dir, exist_ok=True)
+    # Train/dev ratio - choosen based on DROP
+    train_dev_ratio = 0.1
+    random.shuffle(train_qdmr_examples)
+    std_train_qdmrs = train_qdmr_examples[int(train_dev_ratio * len(train_qdmr_examples)):]
+    std_dev_qdmrs = train_qdmr_examples[0:int(train_dev_ratio * len(train_qdmr_examples))]
+    # We're making the BREAK dev set as standard-split's test
+    std_test_qdmrs = dev_qdmr_examples
+    print("Standard-split  Train: {}  Dev: {}  Test: {}".format(len(std_train_qdmrs), len(std_dev_qdmrs),
+                                                                len(std_test_qdmrs)))
 
-    utils.write_qdmr_examples_to_json(qdmr_examples=tmp_based_train_qdmrs,
-                                      qdmr_json=os.path.join(args.tmp_split_dir, "train.json"))
+    print("Writing output to: {}".format(std_split_dir))
+    if not os.path.exists(std_split_dir):
+        os.makedirs(std_split_dir, exist_ok=True)
 
-    utils.write_qdmr_examples_to_json(qdmr_examples=tmp_based_dev_in_qdmrs,
-                                      qdmr_json=os.path.join(args.tmp_split_dir, "dev.json"))
+    utils.write_qdmr_examples_to_json(qdmr_examples=std_train_qdmrs,
+                                      qdmr_json=os.path.join(std_split_dir, "train.json"))
 
-    utils.write_qdmr_examples_to_json(qdmr_examples=tmp_based_dev_out_qdmrs,
-                                      qdmr_json=os.path.join(args.tmp_split_dir, "dev-out.json"))
+    utils.write_qdmr_examples_to_json(qdmr_examples=std_dev_qdmrs,
+                                      qdmr_json=os.path.join(std_split_dir, "dev.json"))
 
-    utils.write_qdmr_examples_to_json(qdmr_examples=tmp_based_test_qdmrs,
-                                      qdmr_json=os.path.join(args.tmp_split_dir, "test.json"))
+    utils.write_qdmr_examples_to_json(qdmr_examples=std_test_qdmrs,
+                                      qdmr_json=os.path.join(std_split_dir, "test.json"))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_qdmr_json", required=True)
     parser.add_argument("--dev_qdmr_json", required=True)
-    parser.add_argument("--tmp_split_dir", required=True)
-    parser.add_argument("--train_ratio", type=float, default=0.8)
+    parser.add_argument("--std_split_dir", required=True)
 
     args = parser.parse_args()
 
