@@ -1,5 +1,5 @@
 import json
-from typing import List, Tuple, Set
+from typing import List, Tuple, Set, Dict, Union, Any
 
 from qdmr.domain_languages.qdmr_language import QDMRLanguage
 
@@ -173,6 +173,41 @@ def convert_nestedexpr_to_tuple(nested_expression) -> Tuple[Set[str], Tuple]:
             else:
                 new_nested.append(argument)
     return function_names, tuple(new_nested)
+
+
+def read_drop_dataset(input_json: str):
+    with open(input_json, "r") as f:
+        dataset = json.load(f)
+    return dataset
+
+
+def convert_answer(answer_annotation: Dict[str, Union[str, Dict, List]]) -> Tuple[str, List]:
+    answer_type = None
+    if answer_annotation["spans"]:
+        answer_type = "spans"
+    elif answer_annotation["number"]:
+        answer_type = "number"
+    elif any(answer_annotation["date"].values()):
+        answer_type = "date"
+
+    answer_content = answer_annotation[answer_type] if answer_type is not None else None
+
+    answer_texts = []
+    if answer_type is None:  # No answer
+        return None
+    elif answer_type == "spans":
+        # answer_content is a list of string in this case
+        answer_texts = answer_content
+    elif answer_type == "date":
+        # answer_content is a dict with "month", "day", "year" as the keys
+        date_tokens = [
+            answer_content[key] for key in ["month", "day", "year"] if key in answer_content and answer_content[key]
+        ]
+        answer_texts = date_tokens
+    elif answer_type == "number":
+        # answer_content is a string of number
+        answer_texts = [answer_content]
+    return answer_type, answer_texts
 
 
 if __name__ == "__main__":

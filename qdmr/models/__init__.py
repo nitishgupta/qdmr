@@ -1,1 +1,2 @@
-from qdmr.models.qdmr_seq2seq import SimpleSeq2Seq
+from qdmr.models.qdmr_seq2seq_parser import SimpleSeq2Seq
+from qdmr.models.qdmr_grammar_parser import QDMRGrammarParser

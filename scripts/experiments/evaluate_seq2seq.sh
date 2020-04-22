@@ -6,7 +6,7 @@ export GPU=0
 export BEAMSIZE=1
 
 # SAVED MODEL
-MODEL_DIR=/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/template-split/Seq2Seq-bert/BS_64/S_1
+MODEL_DIR=/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/template-split/Grammar-glove/BS_64/S_1/
 MODEL_TAR=${MODEL_DIR}/model.tar.gz
 PREDICTION_DIR=${MODEL_DIR}/predictions
 mkdir ${PREDICTION_DIR}
