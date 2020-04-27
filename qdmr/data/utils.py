@@ -33,17 +33,38 @@ class Node(object):
         else:
             return self.predicate
 
-    def _get_nested_expression_with_strings(self):
-        """This nested expression is only used for human-readability and debugging. This is not a parsable program"""
-        string_or_predicate = self.string_arg if self.string_arg is not None else self.predicate
-        if not self.is_leaf():
-            nested_expression = [string_or_predicate]
-            for child in self.children:
-                nested_expression.append(child._get_nested_expression_with_strings())
-            return nested_expression
-        else:
-            return string_or_predicate
+    # def _get_nested_expression_with_strings(self):
+    #     """ Nested expression where predicates are replaced with string_arg if present.
+    #         Note: This nested expression is only used for human-readability and debugging.
+    #         This cannot be converted to lisp notation and is obviously not a parsable program.
+    #     """
+    #     string_or_predicate = self.string_arg if self.string_arg is not None else self.predicate
+    #     if not self.is_leaf():
+    #         nested_expression = [string_or_predicate]
+    #         for child in self.children:
+    #             nested_expression.append(child._get_nested_expression_with_strings())
+    #         return nested_expression
+    #     else:
+    #         return string_or_predicate
 
+    def get_nested_expression_with_strings(self):
+        """ Nested expression where predicates w/ string_arg are written as PREDICATE(string_arg)
+            This is introduced with drop_language since there are multiple predicates that select string_arg from text.
+            Therefore, if we just write the string-arg to data (as done previously with typed_nested_expression), it
+            would not be sufficient that some node is not a predicate in the language and hence get_ques_span pred.
+            We can write the output of this function in json data and parse it back by removing split on ( and )
+        """
+        node_name = self.predicate
+        if self.string_arg is not None:
+            # GET_QUESTION_NUMBER(25)
+            node_name = node_name + "(" + self.string_arg + ")"
+        if self.is_leaf():
+            return node_name
+        else:
+            nested_expression = [node_name]
+            for child in self.children:
+                nested_expression.append(child.get_nested_expression_with_strings())
+            return nested_expression
 
 class QDMRExample(object):
     def __init__(self, q_decomp):
@@ -59,10 +80,19 @@ class QDMRExample(object):
         self.typed_nested_expression: List = []
         if "typed_nested_expression" in q_decomp:
             self.typed_nested_expression = q_decomp["typed_nested_expression"]
+
+        # This was added after completing parse_dataset/drop_grammar_program. This class is a moving target.
+        # This nested_expression should be s.t. string-arg grounding predicates occur as PREDICATE(string-arg).
+        # e.g. ['FILTER_NUM_EQ', ['SELECT', 'GET_QUESTION_SPAN(field goals of Mason)'], 'GET_QUESTION_NUMBER(37)']
+        self.drop_nested_expression: List = []
+        if "drop_nested_expression" in q_decomp:
+            self.drop_nested_expression = q_decomp["drop_nested_expression"]
+
         self.program_tree: Node = None
         self.typed_masked_nested_expr = []
         if self.typed_nested_expression:
-            self.program_tree: Node = string_arg_to_quesspan_pred(nested_expression_to_tree(self.typed_nested_expression))
+            self.program_tree: Node = nested_expression_to_tree(self.typed_nested_expression,
+                                                                predicates_with_strings=True)
             # This contains string-args masked as GET_QUESTION_SPAN predicate
             self.typed_masked_nested_expr = self.program_tree.get_nested_expression()
 
@@ -75,6 +105,7 @@ class QDMRExample(object):
             "program": self.program,
             "nested_expression": self.nested_expression,
             "typed_nested_expression": self.typed_nested_expression,
+            "drop_nested_expression": self.drop_nested_expression,
             "operators": self.operators
         }
         return json_dict
@@ -108,6 +139,21 @@ def nested_expression_to_lisp(nested_expression):
         raise NotImplementedError
 
 
+def convert_nestedexpr_to_tuple(nested_expression):
+    """Converts a nested expression list into a nested expression tuple to make the program hashable."""
+    new_nested = []
+    for i, argument in enumerate(nested_expression):
+        if i == 0:
+            new_nested.append(argument)
+        else:
+            if isinstance(argument, list):
+                tupled_nested = convert_nestedexpr_to_tuple(argument)
+                new_nested.append(tupled_nested)
+            else:
+                new_nested.append(argument)
+    return tuple(new_nested)
+
+
 def nested_expression_to_linearized_list(nested_expression, open_bracket: str = "(",
                                          close_bracket: str = ")") -> List[str]:
     """Convert the program (as nested expression) into a linearized expression.
@@ -132,14 +178,30 @@ def nested_expression_to_linearized_list(nested_expression, open_bracket: str = 
         raise NotImplementedError
 
 
-def nested_expression_to_tree(nested_expression) -> Node:
+def nested_expression_to_tree(nested_expression, predicates_with_strings) -> Node:
+    """ There are two types of expressions, one which have string-arg as it is and without a predicate (True)
+    and other, newer DROP style, where string-arg nodes in expression are PREDICATE(string-arg)
+    """
     if isinstance(nested_expression, str):
-        current_node = Node(predicate=nested_expression)
+        if not predicates_with_strings:
+            current_node = Node(predicate=nested_expression)
+        else:
+            predicate_w_stringarg = nested_expression
+            # This can either be a plain predicate (e.g. `SELECT`) or with a string-arg (e.g. `GET_Q_SPAN(string-arg)`)
+            start_paranthesis_index = predicate_w_stringarg.find("(")
+            if start_paranthesis_index == -1:
+                predicate = predicate_w_stringarg
+                current_node = Node(predicate=predicate)
+            else:
+                predicate = predicate_w_stringarg[0:start_paranthesis_index]
+                # +1 to avoid (, and -1 to avoid )
+                string_arg = predicate_w_stringarg[start_paranthesis_index+1:-1]
+                current_node = Node(predicate=predicate, string_arg=string_arg)
 
     elif isinstance(nested_expression, list):
         current_node = Node(nested_expression[0])
         for i in range(1, len(nested_expression)):
-            child_node = nested_expression_to_tree(nested_expression[i])
+            child_node = nested_expression_to_tree(nested_expression[i], predicates_with_strings)
             current_node.add_child(child_node)
     else:
         raise NotImplementedError
@@ -211,17 +273,9 @@ def convert_answer(answer_annotation: Dict[str, Union[str, Dict, List]]) -> Tupl
 
 
 if __name__ == "__main__":
-    p = [
-        "COMPARISON_count_max",
-        [
-            "SELECT",
-            "people killed According to official reports"
-        ],
-        [
-            "SELECT",
-            "people wounded According to official reports"
-        ]
-    ]
+    p = ['FILTER_NUM_GT', ['FILTER', ['SELECT', 'GET_QUESTION_SPAN(yards of TD passes)'], 'GET_QUESTION_SPAN(in the first half)'], 'GET_QUESTION_NUMBER(70)']
 
-
-    print(nested_expression_to_linearized_list(p))
+    node: Node = nested_expression_to_tree(p)
+    print(node._get_nested_expression_with_predicate_and_strings())
+    print(node.get_nested_expression_with_strings())
+    print(node.get_nested_expression())

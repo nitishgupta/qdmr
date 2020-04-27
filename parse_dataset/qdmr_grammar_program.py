@@ -233,7 +233,7 @@ def transform_to_fit_grammar(node: Node, question: str, top_level=False):
             # 18 cases left in QDMR-high-level/DROP/train.json
             print("\n----COMPARATIVE----")
             print(question)
-            print(node._get_nested_expression_with_strings())
+            print(node.get_nested_expression_with_strings())
             print()
 
     elif node.predicate in ["SUPERLATIVE_max", "SUPERLATIVE_min"]:
@@ -356,8 +356,10 @@ def parse_qdmr_program_into_language(question: str, nested_expression: List):
 
     Find issues for programs that cannot be converted, define new predicates, etc.
     """
-    program_tree = nested_expression_to_tree(nested_expression)
-    # Map string arguments to GET_QUESTION_SPAN predicate and move the string argument to node.string_arg
+    # These gen-1 nested_expression contain string-arg as it is without a predicate. There is no notion predicates and
+    # grammar yet. This script introduces a grammar for the first time.
+    program_tree = nested_expression_to_tree(nested_expression, predicates_with_strings=False)
+    # Wrap all string arguments with GET_QUESTION_SPAN predicate and move the string argument to node.string_arg
     program_tree = string_arg_to_quesspan_pred(node=program_tree)
 
     program_tree = transform_to_fit_grammar(program_tree, question, top_level=True)
@@ -368,7 +370,7 @@ def parse_qdmr_program_into_language(question: str, nested_expression: List):
         return True, program_tree
     except:
         template = nested_expression_to_lisp(program_tree.get_nested_expression())
-        program = program_tree._get_nested_expression_with_strings()
+        program = program_tree.get_nested_expression_with_strings()
         if template not in template2questionprogram:
             template2questionprogram[template] = []
             template2count[template] = 0
@@ -391,8 +393,8 @@ def parse_qdmr_into_language(qdmr_examples: List[QDMRExample]) -> List[QDMRExamp
             success, program_tree = parse_qdmr_program_into_language(qdmr_example.question,
                                                                      qdmr_example.nested_expression)
             if success:
-                # nested_expr where string arguments are not converted to GET_QUESTION_SPAN
-                typed_nested_expression = program_tree._get_nested_expression_with_strings()
+                # nested_expr where string-arg nodes are written as PREDICATE(string-arg)
+                typed_nested_expression = program_tree.get_nested_expression_with_strings()
                 type_conformed_programs += 1
             qdmr_example.typed_nested_expression = typed_nested_expression
 

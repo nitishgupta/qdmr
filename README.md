@@ -82,7 +82,7 @@ python -m parse_dataset.standard_split \
     --train_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/original-data/train.json \
     --dev_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/original-data/dev.json \
     --std_split_dir  /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/standard-split
-``` 
+```
 
 
 ### Template-based Data Split -- `parse_dataset/template_split.py`
@@ -110,3 +110,34 @@ python -m analysis.qdmr_program_diversity \
   --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/train.json \
   --output_tsv_path /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/examples.tsv
 ```
+
+
+# DROP-programs -- `parse_dataset/drop_grammar_program.py`
+Manually wrote transformations to correct generic QDMR-programs in the context of DROP execution. These new programs are
+based on `qdmr.domain_languages.drop_langauge`.
+
+The script `parse_dataset/drop_grammar_program.py` adds a new key to the `QDMRExample` data written in json,
+`"drop_nested_expression"`. This nested expression is written so that predicates that select string-args are written as
+`PREDICATE(string-arg)`, e.g. `"SELECT_QUESTION_SPAN(touchdowns)"` which is parsed by splitting on `(` and `)`.
+E.g. `["Year_Diff_Single_Event", ["SELECT", "GET_QUESTION_SPAN(years Lodz was the site of a terrorist group)"]]`
+
+```
+python -m parse_dataset.drop_grammar_program \
+  --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/original-data/train.json \
+  --drop_json /shared/nitishg/data/drop/raw/drop_dataset_train.json \
+  --qdmr_split train \
+  --output_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/drop-programs/train.json
+
+python -m parse_dataset.drop_grammar_program \
+  --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/original-data/dev.json \
+  --drop_json /shared/nitishg/data/drop/raw/drop_dataset_dev.json \
+  --qdmr_split dev \
+  --output_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/drop-programs/dev.json
+```
+
+
+
+
+
+
+  

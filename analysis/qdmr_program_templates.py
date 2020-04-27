@@ -80,7 +80,7 @@ def read_qdmr(qdmr_examples: List[QDMRExample]):
 
         qid2ques[query_id] = question
         qid2optemplate[query_id] = operator_template
-        qid2nestedexp[query_id] = program_tree._get_nested_expression_with_strings()
+        qid2nestedexp[query_id] = program_tree.get_nested_expression_with_strings()
         operatortemplate2count[operator_template] += 1
         operatortemplate2qids[operator_template].append(query_id)
 

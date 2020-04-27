@@ -60,7 +60,7 @@ def write_example_programs_tsv(output_tsv_path,
         for i in range(0, min(15, len(qids))):
             qid = qids[i]
             qdmr_example = qid2qdmrexample[qid]
-            nested_expr = qdmr_example.program_tree._get_nested_expression_with_strings()
+            nested_expr = qdmr_example.program_tree.get_nested_expression_with_strings()
             qid_ques_programs.append((func,
                                       qid,
                                       qdmr_example.question,
