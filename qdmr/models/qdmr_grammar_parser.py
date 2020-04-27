@@ -195,8 +195,11 @@ class QDMRGrammarParser(Model):
             outputs["best_action_sequence"] = []
             outputs["predicted_logical_form"] = []
             outputs["debug_info"] = []
-            # outputs["predicted_sql_query"] = []
-            # outputs["sql_queries"] = []
+            query_ids: List[str] = []
+            questions: List[str] = []
+            question_tokens: List[List[str]] = []
+            gold_programs: List[str] = []
+            exact_matches = []
             for i in range(batch_size):
                 # Decoding may not have terminated with any completed valid SQL queries, if `num_steps`
                 # isn't long enough (or if the model is not trained enough and gets into an
@@ -206,7 +209,7 @@ class QDMRGrammarParser(Model):
                     self._denotation_accuracy(0)
                     self._valid_sql_query(0)
                     self._action_similarity(0)
-                    outputs["predicted_sql_query"].append("")
+                    outputs["predicted_logical_form"].append("")
                     continue
 
                 best_action_indices = best_final_states[i][0].action_history[0]
@@ -221,16 +224,27 @@ class QDMRGrammarParser(Model):
                 if action_sequence is not None:
                     # Use a Tensor, not a Variable, to avoid a memory leak.
                     targets = action_sequence[i].data
-                    sequence_in_targets = 0
                     sequence_in_targets = self._action_history_match(best_action_indices, targets)
                     self._exact_match(sequence_in_targets)
+                    exact_matches.append(int(sequence_in_targets))
 
-                    # similarity = difflib.SequenceMatcher(None, best_action_indices, targets)
-                    # self._action_similarity(similarity.ratio())
 
                 outputs["best_action_sequence"].append(action_strings)
                 outputs["predicted_logical_form"].append(predicted_logical_form)
                 outputs["debug_info"].append(best_final_states[i][0].debug_info[0])  # type: ignore
+
+                if metadata is not None:
+                    query_ids.append(metadata[i]["query_id"])
+                    questions.append(metadata[i]["question"])
+                    question_tokens.append(metadata[i]["utterance_tokens"])
+                    gold_programs.append(metadata[i]["logical_form"])
+
+                outputs["question"] = questions
+                outputs["query_id"] = query_ids
+                outputs["question_tokens"] = question_tokens
+                outputs["gold_logical_form"] = gold_programs
+                if exact_matches:
+                    outputs["exact_match"] = exact_matches
         return outputs
 
     def _get_initial_state(

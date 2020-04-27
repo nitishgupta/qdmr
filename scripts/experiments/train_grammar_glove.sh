@@ -29,6 +29,8 @@ MODEL_DIR=Grammar-glove
 PD=BS_${BATCH_SIZE}
 SERIALIZATION_DIR=${SERIALIZATION_DIR_ROOT}/${MODEL_DIR}/${PD}/S_${SEED}
 
+SERIALIZATION_DIR=${SERIALIZATION_DIR_ROOT}/test
+
 #######################################################################################################################
 
 bash scripts/allennlp/train.sh ${CONFIGFILE} \
