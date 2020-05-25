@@ -3,7 +3,7 @@ from collections import defaultdict
 import random
 import argparse
 
-from qdmr.data.utils import read_qdmr_json_to_examples, QDMRExample
+from qdmr.data.utils import read_qdmr_json_to_examples, QDMRExample, nested_expression_to_tree
 
 random.seed(28)
 
@@ -64,15 +64,12 @@ def read_qdmr(qdmr_examples: List[QDMRExample]):
     for qdmr_example in qdmr_examples:
         query_id = qdmr_example.query_id
         question = qdmr_example.question
-        program: List[str] = qdmr_example.program
-        nested_expression: List = qdmr_example.nested_expression
-        typed_nested_expression: List = qdmr_example.typed_nested_expression
+        program_tree = qdmr_example.program_tree
 
         # Skip examples without typed program
-        if not len(typed_nested_expression):
+        if not program_tree:
             continue
 
-        program_tree = qdmr_example.program_tree
         masked_nested_expr = program_tree.get_nested_expression()
 
         # function_names, operator_template = get_operators(masked_nested_expr)
@@ -111,6 +108,8 @@ def train_dev_stats(train_qid2ques, train_optemplate2count, train_optemplate2qid
         dev_extra_templates = dev_templates.difference(train_templates)
         print("Train / Dev common program templates (this disregards arguments): {}".format(len(train_dev_common)))
         print("Dev extra abstract program templates: {}".format(len(dev_extra_templates)))
+        print("Number of questions for each of the new dev-templates: {}".format(
+            [dev_optemplate2count[x] for x in dev_extra_templates]))
     print()
 
     template2count_sorted = sorted(train_optemplate2count.items(), key=lambda x: x[1], reverse=True)
@@ -165,16 +164,11 @@ def main(args):
     train_dev_stats(train_qid2ques, train_optemplate2count, train_optemplate2qids,
                     dev_qid2ques, dev_optemplate2count, dev_optemplate2qids)
 
-    # output_tsv_path = args.output_tsv_path
-    # if args.output_tsv_path:
-    #     write_example_programs_tsv(output_tsv_path, train_qid2ques, train_qid2nestedexp, train_func2qids)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_qdmr_json", required=True)
     parser.add_argument("--dev_qdmr_json", default=None)
-    parser.add_argument("--output_tsv_path", default=None)
     args = parser.parse_args()
 
     main(args)

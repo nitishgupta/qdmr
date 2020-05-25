@@ -6,19 +6,18 @@ export GPU=0
 export BEAMSIZE=1
 
 # SAVED MODEL
-MODEL_DIR=/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/template-split/Grammar-glove/BS_64/S_1
+MODEL_DIR=/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/drop-template-manual-ds/Seq2Seq-glove/BS_64/INORDER_true/ATTNLOSS_true/S_1
 MODEL_TAR=${MODEL_DIR}/model.tar.gz
 PREDICTION_DIR=${MODEL_DIR}/predictions
 mkdir ${PREDICTION_DIR}
 
 DATASET_ROOT=/shared/nitishg/data/qdmr-processed/QDMR-high-level
 DATASET_NAME=DROP
-SPLIT_TYPE=template-split     # standard-split or template-split
-DEVFILE=${DATASET_ROOT}/${DATASET_NAME}/${SPLIT_TYPE}/dev-out.json
+SPLIT_TYPE=drop-template-manual-ds     # standard-split or template-split
+DEVFILE=${DATASET_ROOT}/${DATASET_NAME}/${SPLIT_TYPE}/test.json
 
 PREDICTOR=grammar_parser_predictor
-PREDICTION_FILE=${PREDICTION_DIR}/dev-out_predictions.txt
-
+PREDICTION_FILE=${PREDICTION_DIR}/test_predictions.txt
 
 
 allennlp predict --output-file ${PREDICTION_FILE} \

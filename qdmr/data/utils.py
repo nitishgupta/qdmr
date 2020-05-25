@@ -90,11 +90,19 @@ class QDMRExample(object):
 
         self.program_tree: Node = None
         self.typed_masked_nested_expr = []
-        if self.typed_nested_expression:
+        if self.drop_nested_expression:
+            self.program_tree: Node = nested_expression_to_tree(self.drop_nested_expression,
+                                                                predicates_with_strings=True)
+            # This contains string-args masked as GET_QUESTION_SPAN predicate
+            self.typed_masked_nested_expr = self.program_tree.get_nested_expression()
+
+        elif self.typed_nested_expression:
             self.program_tree: Node = nested_expression_to_tree(self.typed_nested_expression,
                                                                 predicates_with_strings=True)
             # This contains string-args masked as GET_QUESTION_SPAN predicate
             self.typed_masked_nested_expr = self.program_tree.get_nested_expression()
+
+        self.extras: Dict = q_decomp.get("extras", {})
 
     def to_json(self):
         json_dict = {
@@ -106,7 +114,8 @@ class QDMRExample(object):
             "nested_expression": self.nested_expression,
             "typed_nested_expression": self.typed_nested_expression,
             "drop_nested_expression": self.drop_nested_expression,
-            "operators": self.operators
+            "operators": self.operators,
+            "extras": self.extras,
         }
         return json_dict
 
@@ -128,7 +137,7 @@ def write_qdmr_examples_to_json(qdmr_examples: List[QDMRExample], qdmr_json: str
         json.dump(examples_as_json_dicts, outf, indent=4)
 
 
-def nested_expression_to_lisp(nested_expression):
+def nested_expression_to_lisp(nested_expression) -> str:
     if isinstance(nested_expression, str):
         return nested_expression
 
@@ -154,8 +163,8 @@ def convert_nestedexpr_to_tuple(nested_expression):
     return tuple(new_nested)
 
 
-def nested_expression_to_linearized_list(nested_expression, open_bracket: str = "(",
-                                         close_bracket: str = ")") -> List[str]:
+def linearize_nested_expression(nested_expression, open_bracket: str = "(",
+                                close_bracket: str = ")") -> List[str]:
     """Convert the program (as nested expression) into a linearized expression.
 
         The natural language arguments in the program are kept intact as a single program `token` and it is the onus of
@@ -169,7 +178,7 @@ def nested_expression_to_linearized_list(nested_expression, open_bracket: str = 
         # Flattened list of tokens for each element in the list
         program_tokens = []
         for x in nested_expression:
-            program_tokens.extend(nested_expression_to_linearized_list(x, open_bracket, close_bracket))
+            program_tokens.extend(linearize_nested_expression(x, open_bracket, close_bracket))
         # Inserting a bracket around the program tokens
         program_tokens.insert(0, open_bracket)
         program_tokens.append(close_bracket)
@@ -207,6 +216,22 @@ def nested_expression_to_tree(nested_expression, predicates_with_strings) -> Nod
         raise NotImplementedError
 
     return current_node
+
+def get_inorder_function_list(node: Node) -> List[str]:
+    inorder_func_list = [node.predicate]
+    for c in node.children:
+        inorder_func_list.extend(get_inorder_function_list(c))
+    return inorder_func_list
+
+
+def get_inorder_function_list_from_template(tempalte: Union[Tuple, str]) -> List[str]:
+    if isinstance(tempalte, tuple):
+        inorder_func_list = [tempalte[0]]
+        for c in tempalte[1:]:
+            inorder_func_list.extend(get_inorder_function_list_from_template(c))
+    else:
+        return [tempalte]
+    return inorder_func_list
 
 
 def string_arg_to_quesspan_pred(node: Node):

@@ -76,8 +76,8 @@ partial_project = partial(project, "a")
 class DROPLanguage(DomainLanguage):
     """This language is tailored for DROP. The starting-step for this was the QDMRLanguage."""
     def __init__(self):
-        super().__init__(start_types={Bool, Number, Set[PassageSpan], SetProp, PassageSpan, QuestionSpan, Set[Number],
-                                      Number2Bool, YearDiff})
+        super().__init__(start_types={Bool, Set[PassageSpan], PassageSpan, QuestionSpan, Set[Number],
+                                      YearDiff})
 
     @predicate
     def GET_QUESTION_SPAN(self) -> QuestionSpan:
@@ -206,6 +206,9 @@ class DROPLanguage(DomainLanguage):
         first project the span to a set of spans and output the cardinality of that set, among many other options
         condition: Is a function that maps a number to a boolean based on the condition mentioned in the question.
         """
+        # TODO(nitish): The first argument should be Set[Entity] where Entity is represented as a set of passage spans,
+        #  or in our world a passage_attention attending to multiple mentions
+        #  Then passage2num can be take each one of these passage_attentions for execution
         pass
 
     @predicate
@@ -362,22 +365,27 @@ def main():
         else:
             raise NotImplementedError
 
-    qdmr_language = DROPLanguage()
+    drop_language = DROPLanguage()
+    DROP_predicates = sorted(list(drop_language._functions.keys()))
+    print(DROP_predicates)
+
 
     print("Non termincal prods")
-    non_terminal_prods = qdmr_language.get_nonterminal_productions()
-    print(non_terminal_prods)
+    non_terminal_prods = drop_language.get_nonterminal_productions()
+    print("\n".join(non_terminal_prods))
 
     print("\n")
     print("All possible prods")
-    all_possible_prods = qdmr_language.all_possible_productions()
-    print(all_possible_prods)
+    all_possible_prods = drop_language.all_possible_productions()
+    print("\n".join(all_possible_prods))
+
+    exit()
 
 
     # program = "(COMPARATIVE (SELECT GET_QUESTION_SPAN) (PARTIAL_GROUP_count (PARTIAL_PROJECT GET_QUESTION_SPAN)) (CONDITION GET_QUESTION_SPAN))"
     program = "(COMPARATIVE (SELECT GET_QUESTION_SPAN) (PSSA GET_QUESTION_SPAN) (CONDITION GET_QUESTION_SPAN))"
     nested_expression = lisp_to_nested_expression(program)
-    action_seq = qdmr_language.logical_form_to_action_sequence(program)
+    action_seq = drop_language.logical_form_to_action_sequence(program)
     print(nested_expression)
     print(action_seq)
 

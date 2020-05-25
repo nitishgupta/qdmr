@@ -98,14 +98,14 @@ This script makes 4 splits, `train.json`, `dev.json`, `dev-out.json` and `test.j
 
 ```
 python -m parse_dataset.template_split \
-    --train_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP//original-data/train.json \
+    --train_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/original-data/train.json \
     --dev_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/original-data/dev.json \
     --tmp_split_dir /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/template-split
 ```
 
 ## TSV Examples for Grammar Programs -- `analysis/qdmr_program_diversity.py`
 Write examples of programs for each predicate in the dataset to a TSV file.
-```
+```=
 python -m analysis.qdmr_program_diversity \
   --qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/train.json \
   --output_tsv_path /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/examples.tsv

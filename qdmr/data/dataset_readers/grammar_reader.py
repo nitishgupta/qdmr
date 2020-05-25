@@ -2,20 +2,22 @@ from typing import Dict, List, Tuple, Any
 import logging
 import json
 import random
+import numpy as np
 
 from overrides import overrides
 
 from allennlp.common.file_utils import cached_path
 from allennlp.common.util import START_SYMBOL, END_SYMBOL
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
-from allennlp.data.fields import TextField, Field, MetadataField, ListField, IndexField
+from allennlp.data.fields import TextField, Field, MetadataField, ListField, IndexField, ArrayField
 from allennlp.data.instance import Instance
 from allennlp.data.tokenizers import Token, Tokenizer, SpacyTokenizer
 from allennlp.data.token_indexers import TokenIndexer, SingleIdTokenIndexer
 from allennlp_semparse.fields.production_rule_field import ProductionRuleField
 
-import qdmr.data.utils as qdmr_utils
+from qdmr.data.utils import Node, nested_expression_to_lisp, read_qdmr_json_to_examples, QDMRExample
 from qdmr.domain_languages.qdmr_language import QDMRLanguage
+from qdmr.domain_languages.drop_language import DROPLanguage
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -78,49 +80,60 @@ class GrammarDatasetReader(DatasetReader):
         """
 
         logger.info("Reading file at %s", file_path)
-        qdmr_examples: List[qdmr_utils.QDMRExample] = qdmr_utils.read_qdmr_json_to_examples(file_path)
+        qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(file_path)
 
 
         for qdmr_example in qdmr_examples:
             query_id: str = qdmr_example.query_id
             question: str = qdmr_example.question
-            typed_masked_nested_expression: List = qdmr_example.typed_masked_nested_expr
-            if not typed_masked_nested_expression:
+            program_tree: Node = qdmr_example.program_tree   # None if absent
+            if not program_tree:
                 self.skipped_wo_program += 1
                 continue
 
-            qdmr_language: QDMRLanguage = QDMRLanguage()
-            logical_form = qdmr_utils.nested_expression_to_lisp(typed_masked_nested_expression)
-            gold_action_sequence: List[str] = qdmr_language.logical_form_to_action_sequence(logical_form)
+            # qdmr_language: QDMRLanguage = QDMRLanguage()
+            drop_language: DROPLanguage = DROPLanguage()
+            logical_form = nested_expression_to_lisp(program_tree.get_nested_expression())
+            gold_action_sequence: List[str] = drop_language.logical_form_to_action_sequence(logical_form)
+
+            extras: Dict = qdmr_example.extras
 
             additional_metadata = {"query_id": query_id, "question": question, "logical_form": logical_form}
 
             # TODO(nitish): Some utterance gives Spacy error even though SpacyTokenizer is able to parse it cmd shell
             # try:
             instance = self.text_to_instance(utterance=question,
-                                             qdmr_language=qdmr_language,
+                                             language=drop_language,
+                                             extras=extras,
                                              gold_action_sequence=gold_action_sequence,
                                              additional_metadata=additional_metadata)
-            # except:
-            #     self.skipped_wo_program += 1
-            #     continue
             if instance is not None:
                 yield instance
 
         logger.info(f"Total examples: {len(qdmr_examples)}  "
                     f"Skipped w/o gold-program: {self.skipped_wo_program}  "
                     f"Longest program: {self.longest_program}")
+        # reset
+        self.skipped_wo_program = 0
+        self.longest_program = 0
 
     @overrides
     def text_to_instance(self,
                          utterance: str,
-                         qdmr_language: QDMRLanguage,
+                         language: DROPLanguage,
+                         extras: Dict,
                          gold_action_sequence: List[str] = None,
                          additional_metadata: Dict[str, Any] = None) -> Instance:  # type: ignore
         # pylint: disable=arguments-differ
         fields: Dict[str, Field] = {}
 
-        tokenized_source: List[Token] = self._source_tokenizer.tokenize(utterance)
+        if "question_tokens" in extras:
+            question_tokens: List[str] = extras["question_tokens"]
+            tokenized_source: List[Token] = [Token(t) for t in question_tokens]
+        else:
+            logger.info("Tokenizing questions. Earlier it presented errors!! Pre-tokenize utterances ")
+            tokenized_source: List[Token] = self._source_tokenizer.tokenize(utterance)
+
         source_field = TextField(tokenized_source, self._source_token_indexers)
         fields["tokens"] = source_field
 
@@ -129,9 +142,9 @@ class GrammarDatasetReader(DatasetReader):
         }
 
         production_rule_fields: List[Field] = []
-        for production_rule in qdmr_language.all_possible_productions():
-            field = ProductionRuleField(production_rule, is_global_rule=True)
-            production_rule_fields.append(field)
+        for production_rule in language.all_possible_productions():
+            rule_field = ProductionRuleField(production_rule, is_global_rule=True)
+            production_rule_fields.append(rule_field)
         action_field = ListField(production_rule_fields)
         fields["valid_actions"] = action_field
 
@@ -140,7 +153,7 @@ class GrammarDatasetReader(DatasetReader):
             for i, action in enumerate(action_field.field_list)
         }
 
-        fields["languages"] = MetadataField(qdmr_language)
+        fields["languages"] = MetadataField(language)
 
         if gold_action_sequence:
             index_fields: List[IndexField] = []
@@ -151,8 +164,19 @@ class GrammarDatasetReader(DatasetReader):
 
             action_sequence_field = ListField(index_fields)
             fields["action_sequence"] = action_sequence_field
-            self.longest_program = len(gold_action_sequence) if len(gold_action_sequence) > self.longest_program \
-                else self.longest_program
+            self.longest_program = max(len(gold_action_sequence), self.longest_program)
+
+            # If target is given, provide attention-supervision is available
+            fastalign_sup_key = "fastalign.grammar"
+            if fastalign_sup_key in extras:
+                # For each output-token, list of input tokens to attend to
+                output_input_alignments: List[List[int]] = extras[fastalign_sup_key]
+                assert len(output_input_alignments) == len(gold_action_sequence)
+                # Since while decoding, we'll only supervise attention for decoding of program-tokens and not END
+                attention_matrix = np.zeros((len(output_input_alignments), len(tokenized_source)), dtype=np.float32)
+                for output_idx, input_idxs in enumerate(output_input_alignments):
+                    attention_matrix[output_idx, input_idxs] = 1.0
+                fields["attention_supervision"] = ArrayField(attention_matrix, padding_value=0)
 
         metadata.update(additional_metadata)
         fields["metadata"] = MetadataField(metadata)

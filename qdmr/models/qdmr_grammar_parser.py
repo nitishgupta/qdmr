@@ -16,13 +16,14 @@ import allennlp.common.util as alcommon_utils
 
 from allennlp_semparse.fields.production_rule_field import ProductionRule
 from allennlp_semparse.state_machines import BeamSearch
-from allennlp_semparse.state_machines.states import GrammarBasedState
+from allennlp_semparse.state_machines.constrained_beam_search import ConstrainedBeamSearch
+from allennlp_semparse.state_machines.states import State, GrammarBasedState
 from allennlp_semparse.state_machines.states import GrammarStatelet, RnnStatelet
 from allennlp_semparse.state_machines.trainers import MaximumMarginalLikelihood
 from allennlp_semparse.state_machines.transition_functions import BasicTransitionFunction
 
 
-from qdmr.domain_languages.qdmr_language import QDMRLanguage
+from qdmr.domain_languages.drop_language import DROPLanguage
 
 logger = logging.getLogger(__name__)
 START_SYMBOL = alcommon_utils.START_SYMBOL
@@ -64,6 +65,7 @@ class QDMRGrammarParser(Model):
         decoder_beam_search: BeamSearch,
         max_decoding_steps: int,
         input_attention: Attention,
+        use_attention_loss: bool = False,
         add_action_bias: bool = True,
         dropout: float = 0.0,
         initializer: InitializerApplicator = InitializerApplicator(),
@@ -78,6 +80,8 @@ class QDMRGrammarParser(Model):
         self._dropout = torch.nn.Dropout(p=dropout)
 
         self._exact_match = Average()
+
+        self._qattn_loss = Average()
 
         # the padding value used by IndexField
         self._action_padding_index = -1
@@ -111,7 +115,7 @@ class QDMRGrammarParser(Model):
             dropout=dropout,
         )
 
-        self.qdmr_language = QDMRLanguage()
+        self.use_attention_loss = use_attention_loss
 
         initializer(self)
 
@@ -120,8 +124,9 @@ class QDMRGrammarParser(Model):
         self,  # type: ignore
         tokens: Dict[str, torch.LongTensor],
         valid_actions: List[List[ProductionRule]],
-        languages: List[QDMRLanguage],
+        languages: List[DROPLanguage],
         action_sequence: torch.LongTensor = None,
+        attention_supervision: torch.FloatTensor = None,
         metadata: List[Dict[str, Any]] = None,
     ) -> Dict[str, torch.Tensor]:
         """
@@ -138,12 +143,15 @@ class QDMRGrammarParser(Model):
             ``ProductionRule`` using a ``ProductionRuleField``.  We will embed all of these
             and use the embeddings to determine which action to take at each timestep in the
             decoder.
-        languages: ``List[QDMRLanguage]``
-            A list of QDMRLanguage objects, one for each instance
+        languages: ``List[DROPLanguage]``
+            A list of DROPLanguage objects, one for each instance
         action_sequence : torch.Tensor, optional (default=None)
             The action sequence for the correct action sequence, where each action is an index into the list
             of possible actions.  This tensor has shape ``(batch_size, sequence_length, 1)``. We remove the
             trailing dimension.
+        attention_supervision: torch.Tensor, optional (default=None)
+            Tensor of shape ``(batch_size, program_length, input_lenth)`` containing multi-hot attention supervision
+            over input-tokens for each program-token.
         metadata: ``List[Dict[str, Any]]``, option
             List of metadata dictionaries, one for each instance
         """
@@ -154,7 +162,7 @@ class QDMRGrammarParser(Model):
 
         # (batch_size, num_tokens, encoder_output_dim)
         encoder_outputs = self._dropout(self._encoder(embedded_utterance, mask))
-        initial_state = self._get_initial_state(encoder_outputs, long_mask, valid_actions, languages)
+        initial_state: GrammarBasedState = self._get_initial_state(encoder_outputs, long_mask, valid_actions, languages)
 
         if action_sequence is not None:
             # Remove the trailing dimension (from ListField[ListField[IndexField]]).
@@ -167,12 +175,36 @@ class QDMRGrammarParser(Model):
         if action_sequence is not None:
             # target_action_sequence is of shape (batch_size, 1, target_sequence_length)
             # here after we unsqueeze it for the MML trainer.
-            loss_output = self._decoder_trainer.decode(
-                initial_state,
-                self._transition_function,
-                (action_sequence.unsqueeze(1), target_mask.unsqueeze(1)),
+            # Copying code from MML - due to side_args
+            (targets, target_mask) = (action_sequence.unsqueeze(1), target_mask.unsqueeze(1))
+            beam_search = ConstrainedBeamSearch(beam_size=1,
+                                                allowed_sequences=targets, allowed_sequence_mask=target_mask)
+            finished_states: Dict[int, List[State]] = beam_search.search(
+                initial_state, self._transition_function
             )
-            outputs.update(loss_output)
+
+            parsing_loss = 0
+            loss = 0
+            for instance_states in finished_states.values():
+                scores = [state.score[0].view(-1) for state in instance_states]
+                parsing_loss += -util.logsumexp(torch.cat(scores))
+            parsing_loss = parsing_loss / len(finished_states)
+            outputs.update({"parsing_loss": parsing_loss})
+            loss += parsing_loss
+
+            side_args: List[List[Dict]] = []
+            for i in range(batch_size):
+                side_args.append(finished_states[i][0].debug_info[0])
+
+            # Question-attention
+            if self.use_attention_loss and self.training:
+                target_mask = target_mask.squeeze(1)
+                attention_loss = self.get_attention_loss(target_mask, side_args, attention_supervision)
+                self._qattn_loss(attention_loss.item())
+                outputs.update({"attn_loss": attention_loss})
+                loss += attention_loss
+
+            outputs.update({"loss": loss})
 
         if not self.training:
             action_mapping = []
@@ -190,7 +222,7 @@ class QDMRGrammarParser(Model):
                 self._max_decoding_steps,
                 initial_state,
                 self._transition_function,
-                keep_final_unfinished_states=True,
+                keep_final_unfinished_states=False,
             )
             outputs["best_action_sequence"] = []
             outputs["predicted_logical_form"] = []
@@ -206,32 +238,29 @@ class QDMRGrammarParser(Model):
                 # infinite action loop).
                 if i not in best_final_states:
                     self._exact_match(0)
-                    self._denotation_accuracy(0)
-                    self._valid_sql_query(0)
-                    self._action_similarity(0)
+                    outputs["best_action_sequence"].append([])
                     outputs["predicted_logical_form"].append("")
-                    continue
+                    outputs["debug_info"].append([])
+                else:
+                    best_action_indices: List[int] = best_final_states[i][0].action_history[0]
 
-                best_action_indices = best_final_states[i][0].action_history[0]
+                    action_strings = [
+                        action_mapping[i][action_index] for action_index in best_action_indices
+                    ]
 
-                action_strings = [
-                    action_mapping[i][action_index] for action_index in best_action_indices
-                ]
+                    predicted_logical_form = languages[i].action_sequence_to_logical_form(action_strings)
 
-                predicted_logical_form = self.qdmr_language.action_sequence_to_logical_form(action_strings)
-                # predicted_sql_query = action_sequence_to_sql(action_strings)
-
-                if action_sequence is not None:
-                    # Use a Tensor, not a Variable, to avoid a memory leak.
-                    targets = action_sequence[i].data
-                    sequence_in_targets = self._action_history_match(best_action_indices, targets)
-                    self._exact_match(sequence_in_targets)
-                    exact_matches.append(int(sequence_in_targets))
+                    if action_sequence is not None:
+                        # Use a Tensor, not a Variable, to avoid a memory leak.
+                        targets = action_sequence[i].data
+                        sequence_in_targets = self._action_history_match(best_action_indices, targets)
+                        self._exact_match(sequence_in_targets)
+                        exact_matches.append(int(sequence_in_targets))
 
 
-                outputs["best_action_sequence"].append(action_strings)
-                outputs["predicted_logical_form"].append(predicted_logical_form)
-                outputs["debug_info"].append(best_final_states[i][0].debug_info[0])  # type: ignore
+                    outputs["best_action_sequence"].append(action_strings)
+                    outputs["predicted_logical_form"].append(predicted_logical_form)
+                    outputs["debug_info"].append(best_final_states[i][0].debug_info[0])  # type: ignore
 
                 if metadata is not None:
                     query_ids.append(metadata[i]["query_id"])
@@ -247,9 +276,45 @@ class QDMRGrammarParser(Model):
                     outputs["exact_match"] = exact_matches
         return outputs
 
+
+    def get_attention_loss(self,
+                           target_mask,
+                           side_args,
+                           attention_supervision):
+        """ Compute attention loss.
+
+        Parmaters:
+        ----------
+        target_mask: `(batch_size, decoding_steps)`
+            Mask for decoding steps
+        side_args: `List[List[Dict]]`
+            For each instance, for each decoding step, a debug_info dictionary
+        attention_supervision: `(batch_size, decoding_steps, input_size)`
+            multi-hot supervision over input-tokens for each decoding step
+        """
+        batch_size, _ = target_mask.size()
+        total_attention_loss = 0.0
+        normalizer = 0
+        for i in range(batch_size):
+            for decoding_step in range(len(side_args[i])):  # len(side_args[i]) is the number of steps for THIS instance
+                pred_attn = side_args[i][decoding_step]["question_attention"]
+                gold_attn = attention_supervision[i, decoding_step, :]
+                mask = target_mask[i, decoding_step].float()
+
+                sum_prob = torch.sum(pred_attn * gold_attn)
+                loss = torch.log(sum_prob + 1e-20) * mask
+                total_attention_loss += loss
+                normalizer += mask
+
+        if normalizer > 0:
+            total_attention_loss = total_attention_loss / normalizer
+
+        return -1.0 * total_attention_loss
+
+
     def _get_initial_state(
         self, encoder_outputs: torch.Tensor, mask: torch.Tensor, actions: List[List[ProductionRule]],
-        languages: List[QDMRLanguage]
+        languages: List[DROPLanguage]
     ) -> GrammarBasedState:
 
         batch_size = encoder_outputs.size(0)
@@ -283,6 +348,8 @@ class QDMRGrammarParser(Model):
 
         initial_grammar_state = [self._create_grammar_state(actions[i], languages[i]) for i in range(batch_size)]
 
+        initial_side_args = [[] for _ in range(batch_size)]
+
         initial_state = GrammarBasedState(
             batch_indices=list(range(batch_size)),
             action_history=[[] for _ in range(batch_size)],
@@ -290,7 +357,7 @@ class QDMRGrammarParser(Model):
             rnn_state=initial_rnn_state,
             grammar_state=initial_grammar_state,
             possible_actions=actions,
-            debug_info=None,
+            debug_info=initial_side_args,
         )
         return initial_state
 
@@ -337,16 +404,18 @@ class QDMRGrammarParser(Model):
 
         validation_correct = self._exact_match._total_value
         validation_total = self._exact_match._count
+
         return {
             # "_exact_match_count": validation_correct,
             # "_example_count": validation_total,
             "exact_match": self._exact_match.get_metric(reset),
+            "attn": self._qattn_loss.get_metric(reset),
             # "denotation_acc": self._denotation_accuracy.get_metric(reset),
             # "valid_sql_query": self._valid_sql_query.get_metric(reset),
             # "action_similarity": self._action_similarity.get_metric(reset),
         }
 
-    def _create_grammar_state(self, possible_actions: List[ProductionRule], language: QDMRLanguage
+    def _create_grammar_state(self, possible_actions: List[ProductionRule], language: DROPLanguage
                              ) -> GrammarStatelet:
         """
         This method creates the GrammarStatelet object that's used for decoding.  Part of creating

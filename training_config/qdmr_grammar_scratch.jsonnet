@@ -3,9 +3,7 @@ local utils = import 'utils.libsonnet';
 local epochs = utils.parse_number(std.extVar("EPOCHS"));
 local batch_size = utils.parse_number(std.extVar("BATCH_SIZE"));
 local seed = utils.parse_number(std.extVar("SEED"));
-local glove_path = std.extVar("GLOVE");
-local glove_size = utils.parse_number(std.extVar("GLOVE_EMB_DIM"));
-local attn_loss = utils.boolparser(std.extVar("ATTNLOSS"));
+local emb_size = utils.parse_number(std.extVar("EMB_DIM"));
 
 local trainfile = std.extVar("TRAIN_FILE");
 local devfile = std.extVar("DEV_FILE");
@@ -33,16 +31,15 @@ local devfile = std.extVar("DEV_FILE");
       "token_embedders": {
         "tokens": {
           "type": "embedding",
-          "pretrained_file": glove_path,
           "vocab_namespace": "source_tokens",
-          "embedding_dim": glove_size,
-          "trainable": false
+          "embedding_dim": emb_size,
+          "trainable": true
         }
       }
     },
     "encoder": {
       "type": "lstm",
-      "input_size": glove_size,
+      "input_size": emb_size,
       "hidden_size": 100,
       "num_layers": 1,
       "bidirectional": true,
@@ -55,27 +52,17 @@ local devfile = std.extVar("DEV_FILE");
     "input_attention": {
       "type": "dot_product"
     },
-    "use_attention_loss": attn_loss,
     "max_decoding_steps": 40,
     "add_action_bias": true,
     "dropout": 0.25,
   },
 
-//  "data_loader": {
-//    "batch_sampler": {
-//        "type": "bucket",
-//        "batch_size": batch_size,
-//        "sorting_keys": ["tokens"],
-//    }
-//  },
-
   "data_loader": {
     "batch_sampler": {
-      "type": "basic",
-      "sampler": {"type": "random"},
-      "batch_size": batch_size,
-      "drop_last": false,
-    },
+        "type": "bucket",
+        "batch_size": batch_size,
+        "sorting_keys": ["tokens"],
+    }
   },
 
   "trainer": {
@@ -83,10 +70,10 @@ local devfile = std.extVar("DEV_FILE");
       "num_serialized_models_to_keep": 1,
     },
     "num_epochs": epochs,
-    // "patience": 10,
+    //"patience": 10,
     "cuda_device": 0,
     "grad_clipping": 5.0,
-    "validation_metric": "+exact_match",
+    "validation_metric": "-loss",
     "optimizer": {
       "type": "adam",
       "lr": 1e-3

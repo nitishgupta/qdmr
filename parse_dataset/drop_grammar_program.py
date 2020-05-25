@@ -125,7 +125,7 @@ def compare_num_to_date(qdmr_node: Node, question: str):
         if node.predicate == "SELECT" and len(node.children) == 1:
                 child1: Node = node.children[0]
                 if child1.predicate == "GET_QUESTION_SPAN":
-                    if "when" in child1.string_arg:
+                    if any([t in child1.string_arg for t in ["when", "date"]]):
                         matches_condition = True
         return matches_condition
 
