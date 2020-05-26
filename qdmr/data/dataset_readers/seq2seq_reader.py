@@ -107,15 +107,10 @@ class Seq2SeqDatasetReader(DatasetReader):
 
             additional_metadata = {"query_id": query_id, "question": question}
 
-            # TODO(nitish): Some utterance gives Spacy error even though SpacyTokenizer is able to parse it cmd shell
-            # try:
             instance = self.text_to_instance(utterance=question,
                                              target_string=linearized_program_str,
                                              extras=extras,
                                              additional_metadata=additional_metadata)
-            # except:
-            #     self.skipped_wo_program += 1
-            #     continue
             if instance is not None:
                 yield instance
 

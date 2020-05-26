@@ -3,13 +3,19 @@ from typing import List, Dict, Set, Tuple
 import os
 import random
 import argparse
+from enum import Enum
 from collections import defaultdict
 
 from qdmr.data.utils import read_qdmr_json_to_examples, QDMRExample, convert_nestedexpr_to_tuple, \
-    get_inorder_function_list_from_template
+    get_inorder_function_list_from_template, nested_expression_to_tree, nested_expression_to_lisp
 
 from qdmr.data import utils
 from analysis.qdmr_program_diversity import get_maps
+from qdmr.domain_languages.drop_language import DROPLanguage
+import numpy as np
+from numpy.random import choice
+
+np.random.seed(1)
 random.seed(1)
 
 manual_test_templates = [
@@ -55,6 +61,7 @@ manual_test_templates = [
 
 
 """ Split the original Break-annotation into train/dev/test. The original data only comes with train & dev """
+
 
 
 def sorted_dict(d: Dict, sort_by_value=True, decreasing=True):
@@ -139,457 +146,228 @@ def select_test_templates_manual(template2count, template2funcs):
     return train_templates, test_templates
 
 
-def select_test_tempalates(probable_template_list: List[Tuple], template2count, target_test_questions: int,
-                           train_templates: List[Tuple], template2funcs: Dict[Tuple, Set[str]], downsample: bool,
-                           common_template_thresholds: List[int]):
-    test_templates_options: List[Set] = []
-    test_numques_options: List[int] = []
-    train_templates_options: List[Set] = []
-
-    print("Target number of test questions: {}".format(target_test_questions))
-
-    # print(len(probable_template_set))
-    # new_probable_set = remove_templates_w_unique_function(probable_template_set, template2funcs)
-    # print(len(new_probable_set))
-    # exit()
-
-    num_chances = 20000
-    for chance in range(num_chances):
-        if chance % 2000 == 0:
-            print("tries: {}".format(chance))
-        # template_list = copy.deepcopy(probable_template_list)
-
-        template_idxs = list(range(len(probable_template_list)))
-        random.shuffle(template_idxs)
-        test_templates = set()
-        template_num = 0
-        num_test_ques = 0
-        for template_num in template_idxs:
-            if num_test_ques >= target_test_questions:
-                break
-            template = probable_template_list[template_num]
-            thrshold = max(common_template_thresholds) if not downsample else min(common_template_thresholds)
-            if template2count[template] > thrshold:     # don't choose frequent templates for testing
-                continue
-            test_templates.add(template)
-            num_test_ques += template2count[template]
-
-        full_train_templates = set(train_templates)
-        full_train_templates.update([t for t in probable_template_list if t not in test_templates])
-        train_funcs = set([func for t in full_train_templates for func in template2funcs[t]])
-        test_funcs = set([func for t in test_templates for func in template2funcs[t]])
-
-        testfuncs_diff_train = test_funcs.difference(train_funcs)
-        if len(testfuncs_diff_train) == 0:  # all functions in test are seen in train
-            test_templates_options.append(test_templates)
-            train_templates_options.append(full_train_templates)
-            test_numques_options.append(num_test_ques)
-
-    print("Number of options : {}".format(len(test_templates_options)))
-    index, t_templates = max(enumerate(test_templates_options), key=lambda x: len(x[1]))
-    test_templates = t_templates
-    # num_t_temps = len(t_templates)
-    # all_templates_options = [temps for temps in test_templates_options if len(temps) == num_t_temps]
-    # num_ques_in_options = [sum([template2count[t] for t in test_templates]) for test_templates in all_templates_options]
-    # index_templates_w_max_ques = max(enumerate(num_ques_in_options), key=lambda x: x[1])
-    # test_templates = all_templates_options[index_templates_w_max_ques[0]]
-    test_num_questions = sum([template2count[t] for t in test_templates])
-    print("Number of test questions: {}".format(test_num_questions))
-    print("Number of test templates: {}".format(len(test_templates)))
-    for template in test_templates:
-        print(f"{template}    {template2count[template]}")
-
-    full_train_templates = set(train_templates)
-    full_train_templates.update([t for t in probable_template_list if t not in test_templates])
-
-    return full_train_templates, test_templates
+def split_train_dev(tr_qdmrs, dev_ratio):
+    random.shuffle(tr_qdmrs)
+    num_tr_qdmrs = len(tr_qdmrs)
+    std_dev_qdmrs = tr_qdmrs[0:int(dev_ratio * num_tr_qdmrs)]
+    std_train_qdmrs = tr_qdmrs[int(dev_ratio * num_tr_qdmrs):]
+    return std_train_qdmrs, std_dev_qdmrs
 
 
-def standard_split(train_examples: List[QDMRExample], test_examples: List[QDMRExample], train_dev_ratio: float = 0.1,
-                   downsample: bool = False):
-
-    train_qids = [example.query_id for example in train_examples]
-    test_qids = [example.query_id for example in test_examples]
-
-    print("Number of train examples: {}".format(len(train_examples)))
-    print("Number of test examples: {}".format(len(test_examples)))
-
-    all_examples = remove_examples_w_infrequent_templates(train_examples + test_examples, template_count_threshold=1)
-    train_examples = [example for example in all_examples if example.query_id in train_qids]
-    test_examples = [example for example in all_examples if example.query_id in test_qids]
-
-    print("Number of train examples: {}".format(len(train_examples)))
-    print("Number of test examples: {}".format(len(test_examples)))
-
-    # Standard-split
-    random.shuffle(train_examples)
-    std_train_qdmrs = train_examples[int(train_dev_ratio * len(train_examples)):]
-    std_dev_qdmrs = train_examples[0:int(train_dev_ratio * len(train_examples))]
-    std_test_qdmrs = test_examples
-    print("Train: ")
-    print_verbose_stats(std_train_qdmrs)
-    print("Dev: ")
-    print_verbose_stats(std_dev_qdmrs)
-
-    if downsample:
-        print("\nDownsampling examples with frequent templates ... ")
-        print("Train examples before downsampling: {}".format(len(std_train_qdmrs)))
-        std_train_qdmrs = downsample_examples(std_train_qdmrs,
-                                              lower_limit=50,
-                                              sample_lower_limit=50,
-                                              sample_upper_limit=50)
-        print("Train examples after downsampling: {}".format(len(std_train_qdmrs)))
-        print_verbose_stats(std_train_qdmrs)
-        # train_examples = [example for example in all_examples if example.query_id in train_qids]
-        # test_examples = [example for example in all_examples if example.query_id in test_qids]
-        # print("Number of train examples: {}".format(len(train_examples)))
-        # print("Number of test examples: {}".format(len(test_examples)))
-
-    print("\nStandard-split")
-    print(f"Train: {len(std_train_qdmrs)}  Dev: {len(std_dev_qdmrs)}  Test: {len(std_test_qdmrs)}")
-
-    return std_train_qdmrs, std_dev_qdmrs, std_test_qdmrs
+class DownsampleStrategy(Enum):
+    full = 0
+    only_train = 1
 
 
-def template_split(train_qdmr_examples: List[QDMRExample], dev_qdmr_examples: List[QDMRExample],
-                   test_ratio: float = 0.15, dev_train_ratio: float = 0.1, downsample: bool = False,
-                   manual_test: bool = False):
-    """ This data is processed using parse_dataset.parse_qdmr and keys in this json can be glanced at from there.
+drop_language = DROPLanguage()
+def is_drop_parsable(example: QDMRExample) -> bool:
+    if not example.drop_nested_expression:
+        return False
+    program_tree = nested_expression_to_tree(example.drop_nested_expression, predicates_with_strings=True)
+    logical_form = nested_expression_to_lisp(program_tree.get_nested_expression())
+    try:
+        gold_action_sequence: List[str] = drop_language.logical_form_to_action_sequence(logical_form)
+        return True
+    except:
+        return False
 
-    The nested_expression in the data makes life easier since functions are already normalized to their min/max, add/sub
-    identifier.
 
-    train_ratio: ``float`` Is the ratio of train_ques to total questions available
-    """
+def unbiased_test_selection(qdmr_examples: List[QDMRExample], testsize: int, template_limit: int = 20):
+    num_examples = len(qdmr_examples)
+    print("num of examples: {}".format(num_examples))
 
-    # Merge original train and dev to make new splits
-    qdmr_examples = train_qdmr_examples + dev_qdmr_examples
-    print("Total QDMR examples: {}".format(len(qdmr_examples)))
-    qdmr_examples = [example for example in qdmr_examples if example.program_tree]  # examples with programs
-    print("Total QDMR examples with programs: {}".format(len(qdmr_examples)))
-
-    # if downsample:
-    #     qdmr_examples = downsample_examples(qdmr_examples,
-    #                                         lower_limit=50,
-    #                                         sample_lower_limit=50,
-    #                                         sample_upper_limit=50)
-    #     print("Total QDMR examples after downsampling: {}".format(len(qdmr_examples)))
-
-    # print_verbose_stats(qdmr_examples)
-
-    print()
-    # Removing examples with templates under a certain count threshold
-    qdmr_examples = remove_examples_w_infrequent_templates(qdmr_examples, template_count_threshold=1)
-    print_verbose_stats(qdmr_examples)
-
-    # Train / Test template split
     qid2qdmrexample, qid2template, pred2qids, template2qids, complexity2templates, template2count, template2funcs = \
         get_maps(qdmr_examples)
 
-    if manual_test:
-        print("\nPerforming manual template split ... ")
-        train_templates = [t for t in template2count if t not in manual_test_templates]
-        test_templates = [t for t in template2count if t in manual_test_templates]
-    else:
-        print("\nPerfomring automatic template split ... ")
-        # Test will only contain examples from these complexities
-        test_complexities = [5, 7, 8, 9]
-        # These are definitely train templates
-        train_templates = []
-        # Test templates will be carved out from this. remaining would be added to train_templates
-        probable_templates = []
-        for qdmr_example in qdmr_examples:
-            qid = qdmr_example.query_id
-            template = qid2template[qid]
-            complexity = len(get_inorder_function_list_from_template(template))
-            if complexity in test_complexities:
-                probable_templates.append(template)
-            else:
-                train_templates.append(template)
+    # List of (template, count)
+    sorted_templatecount = sorted_dict(template2count)  # [(template, count)] in decreasing count
+    template_counts = [y for _, y in sorted_templatecount]
+    print("Number of templates: {}".format(len(template2count)))
+    print("Template counts")
+    print(" ".join([str(x) for x in template_counts]))
 
-        target_num_test_questions = int(test_ratio * len(qdmr_examples))
-        train_templates, test_templates = select_test_tempalates(probable_template_list=probable_templates,
-                                                                 template2count=template2count,
-                                                                 target_test_questions=target_num_test_questions,
-                                                                 train_templates=train_templates,
-                                                                 template2funcs=template2funcs,
-                                                                 # Setting this true since we're not downsampling before
-                                                                 # and want to use the 300 threshold
-                                                                 downsample=True,
-                                                                 common_template_thresholds=[300, 30])
+    print(f"Limiting frequent template counts to : {template_limit}.\n"
+          f"This is the template distribution we will sample from ... ")
+    template_counts = [min(c, template_limit) for c in template_counts]
+    print(template_counts)
 
-
-    print("Number of train templates: {}".format(len(train_templates)))
-    print("Number of test templates: {}".format(len(test_templates)))
-
-    ###
-    train_templates = list(train_templates)
-    num_train_ques = sum(template2count[t] for t in train_templates)
-    tr_func_set: Set[str] = funcs_in_templates(templates=train_templates, template2functions=template2funcs)
-    print("\nNumber of train questions: {}".format(num_train_ques))
-    print("Number of train templates: {}".format(len(train_templates)))
-    print("Number of total functions in train: {}".format(len(tr_func_set)))
-
-    # test_complexities = set([template2complexity[t] for t in test_templates])
-    # print(test_complexities)
-    test_templates = list(test_templates)
-    test_func_set: Set[str] = funcs_in_templates(templates=test_templates, template2functions=template2funcs)
-    print("Number of test templates: {}".format(len(test_templates)))
-    print("Number of test functions: {}".format(len(test_func_set)))
-
-    print("Function not in train: {}".format(test_func_set.difference(tr_func_set)))
-    print("Function not in test: {}".format(tr_func_set.difference(test_func_set)))
-
-    train_qdmrs = []
-    # In-domain dev set
-    dev_in_qdmrs = []
-    dev_train_in_ratio = dev_train_ratio
-    train_dev_in_ratio = 1.0 - dev_train_in_ratio
-    for t in train_templates:
-        t_qids = template2qids[t]
-        # Split qids for this template into 0.9/0.1 for train/dev-in
-        t_train_qids = t_qids[0:int(train_dev_in_ratio * len(t_qids))]
-        t_dev_qids = t_qids[int(train_dev_in_ratio * len(t_qids)):]
-        train_qdmrs.extend([qid2qdmrexample[qid] for qid in t_train_qids])
-        dev_in_qdmrs.extend([qid2qdmrexample[qid] for qid in t_dev_qids])
-
-    print("Train: ")
-    print_verbose_stats(train_qdmrs)
-    print("Dev: ")
-    print_verbose_stats(dev_in_qdmrs)
-
-    if downsample:
-        print("\nDownsampling training examples with frequent templates ... ")
-        print("Train examples before downsampling: {}".format(len(train_qdmrs)))
-        train_qdmrs = downsample_examples(train_qdmrs,
-                                          lower_limit=50,
-                                          sample_lower_limit=50,
-                                          sample_upper_limit=50)
-        print("Train examples after downsampling: {}".format(len(train_qdmrs)))
-        print_verbose_stats(train_qdmrs)
-
-    test_qdmrs = [qid2qdmrexample[qid] for t in test_templates for qid in template2qids[t]]
-
-    print("\nTemplate-split")
-    print(f"Train: {len(train_qdmrs)}  Dev: {len(dev_in_qdmrs)}  Test: {len(test_qdmrs)}")
-
-    """ Deprecated 
+    num_templates = len(template_counts)
     test_qids = []
-    test_qdmrs = []
-    # Out-of-domain dev set
-    dev_out_qids = []
-    dev_out_qdmrs = []
-    dev_test_out_ratio = 0.00
-    for t in test_templates:
-        t_qids = template2qids[t]
-        # Split qids for this template into 0.1/0.9 for dev-out/test
-        t_dev_qids = t_qids[0:int(dev_test_out_ratio * len(t_qids))]
-        t_test_qids = t_qids[int(dev_test_out_ratio * len(t_qids)):]
-        dev_out_qids.extend(t_dev_qids)
-        test_qids.extend(t_test_qids)
-        dev_out_qdmrs.extend([qid2qdmrexample[qid] for qid in t_dev_qids])
-        test_qdmrs.extend([qid2qdmrexample[qid] for qid in t_test_qids])
+    print("sampling test templates w/o replacement ... ")
+    while len(test_qids) < testsize:
+        counts = np.array(template_counts) - 1   # sampling templates with count=1 would make them extinct from training
+        template_distribution = counts / np.sum(counts)
+        template_idx = choice(list(range(num_templates)), 1, p=template_distribution)
+        template_idx = int(template_idx)
+        sampled_template = sorted_templatecount[template_idx][0]        # This is the chosen template
+        sampled_qid = random.choice(template2qids[sampled_template])
+        if sampled_qid not in test_qids:
+            test_qids.append(sampled_qid)
+            template_counts[template_idx] -= 1
 
-    print(f"Number of questions; train:{len(train_qdmrs)} dev-in:{len(dev_in_qdmrs)} "
-          f"dev-out:{len(dev_out_qdmrs)} test:{len(test_qdmrs)}")
-    """
+    test_examples = [qid2qdmrexample[qid] for qid in test_qids]
+    remaining_examples = [example for example in qdmr_examples if example.query_id not in test_qids]
+    print("Unbiased test examples stats:")
+    print_verbose_stats(test_examples)
 
-    return train_qdmrs, dev_in_qdmrs, test_qdmrs
+    print("\nremaining examples stats:")
+    print_verbose_stats(remaining_examples)
+
+    return test_examples, remaining_examples
 
 
-# def template_split(train_qdmr_examples: List[QDMRExample], dev_qdmr_examples: List[QDMRExample],
-#                    test_ratio: float = 0.15, dev_train_ratio: float = 0.1, downsample: bool = False,
-#                    manual_test: bool = False):
-#     """ This data is processed using parse_dataset.parse_qdmr and keys in this json can be glanced at from there.
-#
-#     The nested_expression in the data makes life easier since functions are already normalized to their min/max, add/sub
-#     identifier.
-#
-#     train_ratio: ``float`` Is the ratio of train_ques to total questions available
-#     """
-#
-#     # Merge original train and dev to make new splits
-#     qdmr_examples = train_qdmr_examples + dev_qdmr_examples
-#     print("Total QDMR examples: {}".format(len(qdmr_examples)))
-#     qdmr_examples = [example for example in qdmr_examples if example.program_tree]  # examples with programs
-#     print("Total QDMR examples with programs: {}".format(len(qdmr_examples)))
-#
-#     if downsample:
-#         qdmr_examples = downsample_examples(qdmr_examples,
-#                                             lower_limit=50,
-#                                             sample_lower_limit=50,
-#                                             sample_upper_limit=50)
-#         print("Total QDMR examples after downsampling: {}".format(len(qdmr_examples)))
-#
-#     print_verbose_stats(qdmr_examples)
-#
-#     print()
-#     # Removing examples with templates under a certain count threshold
-#     template_count_threshold = 1
-#     print("Removing templates with count <= {}".format(template_count_threshold))
-#     qid2qdmrexample, qid2template, pred2qids, template2qids, complexity2templates, template2count, template2funcs = \
-#         get_maps(qdmr_examples)
-#     templates = [t for t, c in template2count.items() if c > template_count_threshold]
-#     print("Remaining templates: {}".format(len(templates)))
-#
-#     qdmr_examples = [qid2qdmrexample[qid] for t in templates for qid in template2qids[t]]
-#     print_verbose_stats(qdmr_examples)
-#
-#     # Train / Test template split
-#     qid2qdmrexample, qid2template, pred2qids, template2qids, complexity2templates, template2count, template2funcs = \
-#         get_maps(qdmr_examples)
-#
-#     # print_template_complexity(complexity2templates, template2count)
-#
-#     if manual_test:
-#         print("\nPerfomring manual template split ... ")
-#         train_templates = [t for t in template2count if t not in manual_test_templates]
-#         test_templates = [t for t in template2count if t in manual_test_templates]
-#     else:
-#         print("\nPerfomring automatic template split ... ")
-#         # Test will only contain examples from these complexities
-#         test_complexities = [5, 7, 8, 9]
-#         # These are definitely train templates
-#         train_templates = []
-#         # Test templates will be carved out from this. remaining would be added to train_templates
-#         probable_templates = []
-#         for qdmr_example in qdmr_examples:
-#             qid = qdmr_example.query_id
-#             template = qid2template[qid]
-#             complexity = len(get_inorder_function_list_from_template(template))
-#             if complexity in test_complexities:
-#                 probable_templates.append(template)
-#             else:
-#                 train_templates.append(template)
-#
-#         target_num_test_questions = int(test_ratio * len(qdmr_examples))
-#         train_templates, test_templates = select_test_tempalates(probable_template_list=probable_templates,
-#                                                                  template2count=template2count,
-#                                                                  target_test_questions=target_num_test_questions,
-#                                                                  train_templates=train_templates,
-#                                                                  template2funcs=template2funcs,
-#                                                                  downsample=downsample,
-#                                                                  common_template_thresholds=[300, 30])
-#
-#
-#     print("Number of train templates: {}".format(len(train_templates)))
-#     print("Number of test templates: {}".format(len(test_templates)))
-#
-#     ###
-#     train_templates = list(train_templates)
-#     num_train_ques = sum(template2count[t] for t in train_templates)
-#     tr_func_set: Set[str] = funcs_in_templates(templates=train_templates, template2functions=template2funcs)
-#     print("\nNumber of train questions: {}".format(num_train_ques))
-#     print("Number of train templates: {}".format(len(train_templates)))
-#     print("Number of total functions in train: {}".format(len(tr_func_set)))
-#
-#     # test_complexities = set([template2complexity[t] for t in test_templates])
-#     # print(test_complexities)
-#     test_templates = list(test_templates)
-#     test_func_set: Set[str] = funcs_in_templates(templates=test_templates, template2functions=template2funcs)
-#     print("Number of test templates: {}".format(len(test_templates)))
-#     print("Number of test functions: {}".format(len(test_func_set)))
-#
-#     print("Function not in train: {}".format(test_func_set.difference(tr_func_set)))
-#     print("Function not in test: {}".format(tr_func_set.difference(test_func_set)))
-#
-#     train_qids = []
-#     train_qdmrs = []
-#     # In-domain dev set
-#     dev_in_qids = []
-#     dev_in_qdmrs = []
-#     dev_train_in_ratio = dev_train_ratio
-#     for t in train_templates:
-#         t_qids = template2qids[t]
-#         # Split qids for this template into 0.9/0.1 for train/dev-in
-#         t_dev_qids = t_qids[0:int(dev_train_in_ratio * len(t_qids))]
-#         t_train_qids = t_qids[int(dev_train_in_ratio * len(t_qids)):]
-#         train_qids.extend(t_train_qids)
-#         dev_in_qids.extend(t_dev_qids)
-#         train_qdmrs.extend([qid2qdmrexample[qid] for qid in t_train_qids])
-#         dev_in_qdmrs.extend([qid2qdmrexample[qid] for qid in t_dev_qids])
-#
-#     test_qdmrs = [qid2qdmrexample[qid] for t in test_templates for qid in template2qids[t]]
-#
-#     print("\nTemplate-split")
-#     print(f"Train: {len(train_qdmrs)}  Dev: {len(dev_in_qdmrs)}  Test: {len(test_qdmrs)}")
-#
-#     """ Deprecated
-#     test_qids = []
-#     test_qdmrs = []
-#     # Out-of-domain dev set
-#     dev_out_qids = []
-#     dev_out_qdmrs = []
-#     dev_test_out_ratio = 0.00
-#     for t in test_templates:
-#         t_qids = template2qids[t]
-#         # Split qids for this template into 0.1/0.9 for dev-out/test
-#         t_dev_qids = t_qids[0:int(dev_test_out_ratio * len(t_qids))]
-#         t_test_qids = t_qids[int(dev_test_out_ratio * len(t_qids)):]
-#         dev_out_qids.extend(t_dev_qids)
-#         test_qids.extend(t_test_qids)
-#         dev_out_qdmrs.extend([qid2qdmrexample[qid] for qid in t_dev_qids])
-#         test_qdmrs.extend([qid2qdmrexample[qid] for qid in t_test_qids])
-#
-#     print(f"Number of questions; train:{len(train_qdmrs)} dev-in:{len(dev_in_qdmrs)} "
-#           f"dev-out:{len(dev_out_qdmrs)} test:{len(test_qdmrs)}")
-#     """
-#
-#     return train_qdmrs, dev_in_qdmrs, test_qdmrs
+def data_splits(qdmr_examples: List[QDMRExample], dev_train_ratio: float = 0.1, indomain_unbiased_testsize: int = 500,
+                indomain_skewed_testsize: int = 500, unbiased_template_limit: int = 20,
+                downsample: bool = False, ds_template_limit=50):
+
+    print("Total QDMR examples: {}".format(len(qdmr_examples)))
+    qdmr_examples = [example for example in qdmr_examples if is_drop_parsable(example)]  # examples with programs
+    print("Total QDMR examples with programs: {}".format(len(qdmr_examples)))
+
+    qdmr_examples = remove_examples_w_infrequent_templates(qdmr_examples, template_count_threshold=1)
+    print("Number of examples: {}".format(len(qdmr_examples)))
+    print_verbose_stats(qdmr_examples)
+    print("------------------------------------")
+
+    ######################
+    print("\nMaking held-out templates test-set")
+    qid2qdmrexample, qid2template, pred2qids, template2qids, complexity2templates, template2count, template2funcs = \
+        get_maps(qdmr_examples)
+    heldout_test_templates = [t for t in template2count if t in manual_test_templates]
+    remaining_templates = [t for t in template2count if t not in manual_test_templates]
+    print(f"Number of held-out templates: {len(heldout_test_templates)}  Remaining: {len(remaining_templates)}")
+
+
+    heldout_test_templates = list(heldout_test_templates)
+    heldout_test_func_set: Set[str] = funcs_in_templates(templates=heldout_test_templates,
+                                                         template2functions=template2funcs)
+    heldout_test_examples = [qid2qdmrexample[qid] for t in heldout_test_templates for qid in template2qids[t]]
+    print("Number of held-out test questions: {}".format(len(heldout_test_examples)))
+    print("Number of test templates: {}".format(len(heldout_test_templates)))
+    print("Number of test functions: {}".format(len(heldout_test_func_set)))
+    print("held-out example stats:")
+    print_verbose_stats(heldout_test_examples)
+
+    remaining_templates = list(remaining_templates)
+    rem_func_set: Set[str] = funcs_in_templates(templates=remaining_templates, template2functions=template2funcs)
+    remaining_examples = [qid2qdmrexample[qid] for t in remaining_templates for qid in template2qids[t]]
+    print("\nNumber of remaining questions: {}".format(len(remaining_examples)))
+    print("Number of train templates: {}".format(len(remaining_templates)))
+    print("Number of total functions in train: {}".format(len(rem_func_set)))
+    print("------------------------------------")
+
+    ######################
+    print("\nSelecting in-domain skewed test set of size: {}".format(indomain_skewed_testsize))
+    random.shuffle(remaining_examples)
+    indomain_skewed_test_examples = remaining_examples[0:indomain_skewed_testsize]
+    remaining_examples = remaining_examples[indomain_skewed_testsize:]
+    print("Skewed in-domain test set size: {}".format(len(indomain_skewed_test_examples)))
+    print("Number of remaining questions: {}".format(len(remaining_examples)))
+    print("------------------------------------")
+
+    ######################
+    print("\nSelecting in-domain unbiased test set of size: {}".format(indomain_unbiased_testsize))
+    indomain_unbiased_test_examples, remaining_examples = unbiased_test_selection(
+        qdmr_examples=remaining_examples, testsize=indomain_unbiased_testsize, template_limit=unbiased_template_limit)
+    print("remaining examples: {}".format(len(remaining_examples)))
+    print("------------------------------------")
+
+    ######################
+    print("\nMaking training/dev set from remaining examples")
+    if downsample:
+        print("Downsampling remaining examples to limit: {}".format(ds_template_limit))
+        remaining_examples = downsample_examples(remaining_examples,
+                                                 lower_limit=ds_template_limit,
+                                                 sample_lower_limit=ds_template_limit,
+                                                 sample_upper_limit=ds_template_limit)
+        print("After downsampling - ")
+        print("Number of examples after downsampling: {}".format(len(remaining_examples)))
+
+    train_examples, dev_examples = split_train_dev(remaining_examples, dev_ratio=dev_train_ratio)
+    print("Training data size: {}  Dev data size: {}".format(len(train_examples), len(dev_examples)))
+
+    print("training stats: ")
+    print_verbose_stats(train_examples)
+
+    qid2qdmrexample, qid2template, pred2qids, template2qids, complexity2templates, template2count, template2funcs = \
+        get_maps(qdmr_examples)
+    training_templates = list(template2count.keys())
+    tr_func_set: Set[str] = funcs_in_templates(templates=training_templates, template2functions=template2funcs)
+
+    heldout_funcs_not_in_train = heldout_test_func_set.difference(tr_func_set)
+    print("Held-out test-set functions not in train: {}".format(heldout_funcs_not_in_train))
+
+    print("------------------------------------")
+
+    return (train_examples, dev_examples, heldout_test_examples,
+            indomain_unbiased_test_examples, indomain_skewed_test_examples)
+
+
+def write_train_dev_test(output_root, train_qdmrs, dev_qdmrs, test_qdmrs):
+    print("Writing output to: {}".format(output_root))
+    if not os.path.exists(output_root):
+        os.makedirs(output_root, exist_ok=True)
+
+    utils.write_qdmr_examples_to_json(qdmr_examples=train_qdmrs,
+                                      qdmr_json=os.path.join(output_root, "train.json"))
+
+    utils.write_qdmr_examples_to_json(qdmr_examples=dev_qdmrs,
+                                      qdmr_json=os.path.join(output_root, "dev.json"))
+
+    utils.write_qdmr_examples_to_json(qdmr_examples=test_qdmrs,
+                                      qdmr_json=os.path.join(output_root, "test.json"))
 
 
 def main(args):
-    train_qdmr_json = args.train_qdmr_json
-    dev_qdmr_json = args.dev_qdmr_json
-
-    output_dir = args.out_dir
+    train_qdmr_json = os.path.join(args.drop_dir, "train.json")
+    dev_qdmr_json = os.path.join(args.drop_dir, "dev.json")
 
     train_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(train_qdmr_json)
     dev_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(dev_qdmr_json)
 
-    if args.split in ["standard", "std"]:
-        train_qdmrs, dev_qdmrs, test_qdmrs = standard_split(train_examples=train_qdmr_examples,
-                                                            test_examples=dev_qdmr_examples,
-                                                            train_dev_ratio=0.1,
-                                                            downsample=args.downsample)
-    elif args.split in ["template", "temp", "tmp"]:
-        train_qdmrs, dev_qdmrs, test_qdmrs = template_split(train_qdmr_examples=train_qdmr_examples,
-                                                            dev_qdmr_examples=dev_qdmr_examples,
-                                                            test_ratio=0.15,
-                                                            dev_train_ratio=0.1,
-                                                            downsample=args.downsample,
-                                                            manual_test=args.manual_test)
-    else:
-        print("Incorrect split: {}".format(args.split))
-        raise ValueError
+    downsample = args.downsample
+    ds_template_limit = args.ds_template_limit
 
-    print("Writing output to: {}".format(output_dir))
+    print("\n\n#######################")
+    print("Data splits ")
+    all_examples = train_qdmr_examples + dev_qdmr_examples
+    (train_examples, dev_examples, heldout_test_examples,
+     indomain_unbiased_test_examples, indomain_skewed_test_examples) = data_splits(qdmr_examples=all_examples,
+                                                                                   dev_train_ratio=0.15,
+                                                                                   indomain_unbiased_testsize=500,
+                                                                                   indomain_skewed_testsize=500,
+                                                                                   downsample=args.downsample,
+                                                                                   ds_template_limit=ds_template_limit)
+
+    output_dir = args.output_dir
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-    utils.write_qdmr_examples_to_json(qdmr_examples=train_qdmrs,
+    print(f"\n\nWriting data to : {output_dir}")
+    utils.write_qdmr_examples_to_json(qdmr_examples=train_examples,
                                       qdmr_json=os.path.join(output_dir, "train.json"))
 
-    utils.write_qdmr_examples_to_json(qdmr_examples=dev_qdmrs,
+    utils.write_qdmr_examples_to_json(qdmr_examples=dev_examples,
                                       qdmr_json=os.path.join(output_dir, "dev.json"))
 
-    utils.write_qdmr_examples_to_json(qdmr_examples=test_qdmrs,
-                                      qdmr_json=os.path.join(output_dir, "test.json"))
+    utils.write_qdmr_examples_to_json(qdmr_examples=heldout_test_examples,
+                                      qdmr_json=os.path.join(output_dir, "heldout_test.json"))
+
+    utils.write_qdmr_examples_to_json(qdmr_examples=indomain_unbiased_test_examples,
+                                      qdmr_json=os.path.join(output_dir, "indomain_unbiased_test.json"))
+
+    utils.write_qdmr_examples_to_json(qdmr_examples=indomain_skewed_test_examples,
+                                      qdmr_json=os.path.join(output_dir, "indomain_skewed_test.json"))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_qdmr_json", required=True)
-    parser.add_argument("--dev_qdmr_json", required=True)
-    parser.add_argument('--split', type=str, required=True)
-    parser.add_argument("--out_dir", required=True)
+    parser.add_argument("--drop_dir", required=True)
+    parser.add_argument("--output_dir", required=True)
     parser.add_argument('--downsample', dest='downsample', action='store_true')
-    parser.add_argument('--manual_test', dest='manual_test', action='store_true')
+    parser.add_argument("--ds_template_limit", type=int, default=50)
+
 
     args = parser.parse_args()
-
-    if args.split not in ["standard", "template", "std", "temp", "tmp"]:
-        print("Split not defined")
-        raise ValueError
 
     main(args)

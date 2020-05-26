@@ -5,11 +5,11 @@ INCLUDE_PACKAGE=qdmr
 
 
 DATASET_ROOT=/shared/nitishg/data/qdmr-processed/QDMR-high-level
-DATASET_NAME=DROP/new-splits
-SPLIT_TYPE=drop-template-manual-ds
+DATASET_NAME=DROP/splits
+SPLIT_TYPE=full-20
 
 TRAINFILE=${DATASET_ROOT}/${DATASET_NAME}/${SPLIT_TYPE}/train.json
-DEVFILE=${DATASET_ROOT}/${DATASET_NAME}/${SPLIT_TYPE}/test.json
+DEVFILE=${DATASET_ROOT}/${DATASET_NAME}/${SPLIT_TYPE}/dev.json
 
 export GLOVE=/shared/embeddings/glove/glove.6B.100d.txt
 export GLOVE_EMB_DIM=100
@@ -41,14 +41,18 @@ SERIALIZATION_DIR=${SERIALIZATION_DIR_ROOT}/${MODEL_DIR}/${PD}/S_${SEED}
 
 
 export BATCH_SIZE=16
-export SEED=1337
+export SEED=1
 
-for attnloss in true # false
+for seed in 42 1337
 do
-  export ATTNLOSS=${attnloss}
+  for attnloss in true false
+  do
+    export ATTNLOSS=${attnloss}
+    export SEED=${seed}
 
-  PD=BS_${BATCH_SIZE}/ATTNLOSS_${ATTNLOSS}
-  SERIALIZATION_DIR=${SERIALIZATION_DIR_ROOT}/${MODEL_DIR}/${PD}/S_${SEED}_D
+    PD=BS_${BATCH_SIZE}/ATTNLOSS_${ATTNLOSS}
+    SERIALIZATION_DIR=${SERIALIZATION_DIR_ROOT}/${MODEL_DIR}/${PD}/S_${SEED}
 
-  allennlp train ${CONFIGFILE} --include-package ${INCLUDE_PACKAGE} -s ${SERIALIZATION_DIR} &
+    allennlp train ${CONFIGFILE} --include-package ${INCLUDE_PACKAGE} -s ${SERIALIZATION_DIR} &
+  done
 done

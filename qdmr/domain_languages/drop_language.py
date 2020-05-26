@@ -76,8 +76,7 @@ partial_project = partial(project, "a")
 class DROPLanguage(DomainLanguage):
     """This language is tailored for DROP. The starting-step for this was the QDMRLanguage."""
     def __init__(self):
-        super().__init__(start_types={Bool, Set[PassageSpan], PassageSpan, QuestionSpan, Set[Number],
-                                      YearDiff})
+        super().__init__(start_types={Bool, Set[PassageSpan], Set[Number], YearDiff})
 
     @predicate
     def GET_QUESTION_SPAN(self) -> QuestionSpan:

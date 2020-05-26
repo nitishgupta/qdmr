@@ -92,7 +92,7 @@ local devfile = std.extVar("DEV_FILE");
       "num_serialized_models_to_keep": 1,
     },
     "num_epochs": epochs,
-    // "patience": 0,
+    "patience": 15,
     "cuda_device": 0,
     "grad_clipping": 5.0,
     "validation_metric": "+exact_match",

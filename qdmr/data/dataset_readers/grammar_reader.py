@@ -87,21 +87,20 @@ class GrammarDatasetReader(DatasetReader):
             query_id: str = qdmr_example.query_id
             question: str = qdmr_example.question
             program_tree: Node = qdmr_example.program_tree   # None if absent
+            drop_language: DROPLanguage = DROPLanguage()
             if not program_tree:
                 self.skipped_wo_program += 1
                 continue
-
-            # qdmr_language: QDMRLanguage = QDMRLanguage()
-            drop_language: DROPLanguage = DROPLanguage()
             logical_form = nested_expression_to_lisp(program_tree.get_nested_expression())
-            gold_action_sequence: List[str] = drop_language.logical_form_to_action_sequence(logical_form)
+            try:
+                gold_action_sequence: List[str] = drop_language.logical_form_to_action_sequence(logical_form)
+            except:
+                continue
 
             extras: Dict = qdmr_example.extras
 
             additional_metadata = {"query_id": query_id, "question": question, "logical_form": logical_form}
 
-            # TODO(nitish): Some utterance gives Spacy error even though SpacyTokenizer is able to parse it cmd shell
-            # try:
             instance = self.text_to_instance(utterance=question,
                                              language=drop_language,
                                              extras=extras,
