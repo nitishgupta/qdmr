@@ -5,6 +5,8 @@ local batch_size = utils.parse_number(std.extVar("BATCH_SIZE"));
 local seed = utils.parse_number(std.extVar("SEED"));
 local glove_path = std.extVar("GLOVE");
 local glove_size = utils.parse_number(std.extVar("GLOVE_EMB_DIM"));
+local inorder = utils.boolparser(std.extVar("INORDER"));
+local attn_loss = utils.boolparser(std.extVar("ATTNLOSS"));
 
 local trainfile = std.extVar("TRAIN_FILE");
 local devfile = std.extVar("DEV_FILE");
@@ -12,9 +14,6 @@ local devfile = std.extVar("DEV_FILE");
 {
   "dataset_reader": {
     "type": "qdmr_seq2seq_reader",
-    "source_tokenizer": {
-      "type": "spacy"
-    },
     "target_tokenizer": {
       "type": "spacy",
       "split_on_spaces": true
@@ -33,7 +32,8 @@ local devfile = std.extVar("DEV_FILE");
         "type": "single_id",
         "namespace": "target_tokens"
       }
-    }
+    },
+    "inorder": inorder,
   },
 
   "train_data_path": trainfile,
@@ -61,27 +61,41 @@ local devfile = std.extVar("DEV_FILE");
     },
     "encoder": {
       "type": "lstm",
-      "input_size": 1324,
+      "input_size": 1124,
       "hidden_size": 100,
       "num_layers": 1,
       "bidirectional": true,
       "dropout": 0.2,
     },
-    "max_decoding_steps": 40,
+    "max_decoding_steps": 50,
     "target_embedding_dim": 100,
     "target_namespace": "target_tokens",
     "attention": {
       "type": "cosine"
     },
+    "use_attention_loss": attn_loss,
     "beam_size": 5
   },
 
+//  "data_loader": {
+//    "batch_sampler": {
+//        "type": "bucket",
+//        "batch_size": batch_size,
+//        "padding_noise": 0.0
+//    }
+//  },
+
   "data_loader": {
     "batch_sampler": {
-        "type": "bucket",
-        "batch_size": batch_size,
-        "padding_noise": 0.0
-    }
+      "type": "basic",
+      "sampler": {"type": "random"},
+      "batch_size": batch_size,
+
+
+
+
+      "drop_last": false,
+    },
   },
 
   "trainer": {
@@ -89,7 +103,7 @@ local devfile = std.extVar("DEV_FILE");
       "num_serialized_models_to_keep": 1,
     },
     "num_epochs": epochs,
-    "patience": 10,
+    "patience": 15,
     "cuda_device": 0,
     "grad_clipping": 5.0,
     "validation_metric": "+exact_match",

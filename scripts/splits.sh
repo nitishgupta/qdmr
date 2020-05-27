@@ -2,42 +2,29 @@
 
 ROOT_DIR=/shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP
 
-STD=new-splits/drop-standard
-STD_DS=new-splits/drop-standard-ds
+SPLITS_DIR=resplits-bkp
 
-TMP=new-splits/drop-template-manual
-TMP_DS=new-splits/drop-template-manual-ds
-
-mkdir -p ${ROOT_DIR}/${STD}
-python -m parse_dataset.split_qdmr_data \
-  --train_qdmr_json ${ROOT_DIR}/drop-programs/train.json \
-  --dev_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/drop-programs/dev.json \
-  --out_dir ${ROOT_DIR}/${STD} \
-  --split std > ${ROOT_DIR}/${STD}/stats.txt
+#mkdir -p ${ROOT_DIR}/${SPLITS_DIR}/full
+#python -m parse_dataset.split_qdmr_data \
+#  --drop_dir ${ROOT_DIR}/drop-programs \
+#  --output_dir ${ROOT_DIR}/${SPLITS_DIR}/full > ${ROOT_DIR}/${SPLITS_DIR}/full/stats.txt
 
 
-mkdir -p ${ROOT_DIR}/${STD_DS}
-python -m parse_dataset.split_qdmr_data \
-  --train_qdmr_json ${ROOT_DIR}/drop-programs/train.json \
-  --dev_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/drop-programs/dev.json \
-  --out_dir ${ROOT_DIR}/${STD_DS} \
-  --split std \
-  --downsample > ${ROOT_DIR}/${STD_DS}/stats.txt
+#for DS_LIMIT in 50 40 30 20 10
+#do
+#  mkdir -p ${ROOT_DIR}/${SPLITS_DIR}/full-${DS_LIMIT}
+#  python -m parse_dataset.split_qdmr_data \
+#    --drop_dir ${ROOT_DIR}/drop-programs \
+#    --output_dir ${ROOT_DIR}/${SPLITS_DIR}/full-${DS_LIMIT} \
+#    --downsample \
+#    --ds_template_limit ${DS_LIMIT} > ${ROOT_DIR}/${SPLITS_DIR}/full-${DS_LIMIT}/stats.txt
+#done
 
-mkdir -p ${ROOT_DIR}/${TMP}
-python -m parse_dataset.split_qdmr_data \
-  --train_qdmr_json ${ROOT_DIR}/drop-programs/train.json \
-  --dev_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/drop-programs/dev.json \
-  --out_dir ${ROOT_DIR}/${TMP} \
-  --split tmp \
-  --manual_test > ${ROOT_DIR}/${TMP}/stats.txt
 
-mkdir -p ${ROOT_DIR}/${TMP_DS}
-python -m parse_dataset.split_qdmr_data \
-  --train_qdmr_json ${ROOT_DIR}/drop-programs/train.json \
-  --dev_qdmr_json /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/drop-programs/dev.json \
-  --out_dir ${ROOT_DIR}/${TMP_DS} \
-  --split tmp \
-  --manual_test \
-  --downsample > ${ROOT_DIR}/${TMP_DS}/stats.txt
-
+for DS_LIMIT in 50 40 30 20 10
+do
+  mkdir -p ${ROOT_DIR}/${SPLITS_DIR}/full-${DS_LIMIT}
+  python -m parse_dataset.update_extras \
+    --parent_dir /shared/nitishg/data/qdmr-processed/QDMR-high-level/DROP/drop-programs \
+    --output_dir ${ROOT_DIR}/${SPLITS_DIR}/full-${DS_LIMIT}
+done

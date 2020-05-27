@@ -17,14 +17,16 @@ from allennlp.nn import util
 from allennlp.nn.beam_search import BeamSearch
 from allennlp.training.metrics import BLEU, Average
 
+from qdmr.modules.attention.coverage_attention import CoverageAdditiveAttention
+
 """
 Copy from (github.com/allenai/allennlp-models/blob/master/allennlp_models/seq2seq/simple_seq2seq_model.py)
 Two reasons for copying -- can modify as we like and no dependence on the allennlp-models codebase
 """
 
 
-@Model.register("qdmr_seq2seq")
-class SimpleSeq2Seq(Model):
+@Model.register("qdmr_seq2seq_coverage")
+class SimpleSeq2SeqCoverage(Model):
     """
     This `SimpleSeq2Seq` class is a `Model` which takes a sequence, encodes it, and then
     uses the encoded representations to decode another sequence.  You can use this as the basis for
@@ -77,7 +79,6 @@ class SimpleSeq2Seq(Model):
         source_embedder: TextFieldEmbedder,
         encoder: Seq2SeqEncoder,
         max_decoding_steps: int,
-        attention: Attention = None,
         use_attention_loss: bool = False,
         beam_size: int = None,
         target_namespace: str = "tokens",
@@ -126,7 +127,10 @@ class SimpleSeq2Seq(Model):
         num_classes = self.vocab.get_vocab_size(self._target_namespace)
 
         # Attention mechanism applied to the encoder output for each step.
-        self._attention = attention
+        self._attention = CoverageAdditiveAttention(self._encoder.get_output_dim(),
+                                                    self._encoder.get_output_dim())
+
+        self._coverage_loss = Average()
 
         # Dense embedding of vocab words in the target space.
         target_embedding_dim = target_embedding_dim or source_embedder.get_output_dim()
@@ -193,7 +197,7 @@ class SimpleSeq2Seq(Model):
             for each source sentence in the batch.
         """
         # shape: (group_size, num_classes)
-        output_projections, state = self._prepare_output_projections(last_predictions, state)
+        _, output_projections, state = self._prepare_output_projections(last_predictions, state)
 
         # shape: (group_size, num_classes)
         class_log_probabilities = F.log_softmax(output_projections, dim=-1)
@@ -376,6 +380,7 @@ class SimpleSeq2Seq(Model):
         state["decoder_context"] = state["encoder_outputs"].new_zeros(
             batch_size, self._decoder_output_dim
         )
+        state["coverage_context"] = state["encoder_outputs"].new_zeros(batch_size, state["encoder_outputs"].shape[1])
         return state
 
     def _forward_loop(
@@ -422,6 +427,7 @@ class SimpleSeq2Seq(Model):
 
         step_logits: List[torch.Tensor] = []
         step_predictions: List[torch.Tensor] = []
+        step_attn_weights: List[torch.Tensor] = []
         attention_supervision_loss = 0.0
         for timestep in range(num_decoding_steps):
             if self.training and torch.rand(1).item() < self._scheduled_sampling_ratio:
@@ -445,9 +451,11 @@ class SimpleSeq2Seq(Model):
                 attn_supvervision = attention_supervision[:, timestep, :]   # Shape: (batch_size, num_input_tokens)
 
             # shape: (batch_size, num_classes)
-            output_projections, state = self._prepare_output_projections(input_choices, state,
-                                                                         attn_supvervision,
-                                                                         t_mask)
+            input_weights, output_projections, state = self._prepare_output_projections(input_choices, state,
+                                                                                        attn_supvervision,
+                                                                                        t_mask)
+            step_attn_weights.append(input_weights.unsqueeze(1))
+
             if self.training and "attention_loss" in state:
                 attention_supervision_loss += state["attention_loss"]
                 state.pop("attention_loss")
@@ -469,7 +477,10 @@ class SimpleSeq2Seq(Model):
         # shape: (batch_size, num_decoding_steps)
         predictions = torch.cat(step_predictions, 1)
 
-        output_dict = {"predictions": predictions}
+        # shape: (batch_size, num_decoding_steps, max_input_sequence_length)
+        attention_input_weights = torch.cat(step_attn_weights, 1)
+
+        output_dict = {"predictions": predictions, "attention_input_weights": attention_input_weights}
 
         if target_tokens:
             # shape: (batch_size, num_decoding_steps, num_classes)
@@ -478,9 +489,14 @@ class SimpleSeq2Seq(Model):
             # Compute loss.
             target_mask = util.get_text_field_mask(target_tokens)
             loss = self._get_loss(logits, targets, target_mask)
+
+            coverage_loss = self._get_coverage_loss(attention_input_weights, source_mask, target_mask)
+            self._coverage_loss(coverage_loss.detach().cpu().item())
+
             attention_supervision_loss = attention_supervision_loss / (num_decoding_steps - 1)
             output_dict["loss"] = loss + attention_supervision_loss
             output_dict["s2s_loss"] = loss
+            output_dict["cov_loss"] = coverage_loss
             if self.training:
                 output_dict["attn_loss"] = attention_supervision_loss
 
@@ -508,7 +524,7 @@ class SimpleSeq2Seq(Model):
     def _prepare_output_projections(
         self, last_predictions: torch.Tensor, state: Dict[str, torch.Tensor],
         attention_supervision: torch.Tensor = None, t_mask: torch.Tensor = None,
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Decode current state and last prediction to produce produce projections
         into the target space, which can then be used to get probabilities of
@@ -528,23 +544,22 @@ class SimpleSeq2Seq(Model):
         # shape: (group_size, decoder_output_dim)
         decoder_context = state["decoder_context"]
 
+        # shape: (group_size, max_input_sequence_length)
+        coverage_context = state["coverage_context"]
+
         # shape: (group_size, target_embedding_dim)
         embedded_input = self._target_embedder(last_predictions)
 
-        if self._attention:
-            # shape: (group_size, encoder_output_dim)
-            attended_input, attn_loss = self._prepare_attended_input(
-                decoder_hidden, encoder_outputs, source_mask,
-                attention_supervision, t_mask,
-            )
-            if self.training:
-                state["attention_loss"] = attn_loss
+        # shape: (group_size, encoder_output_dim)
+        attended_input, input_weights, attn_loss = self._prepare_attended_input(
+            decoder_hidden, encoder_outputs, source_mask, coverage_context,
+            attention_supervision, t_mask,
+        )
+        if self.training:
+            state["attention_loss"] = attn_loss
 
-            # shape: (group_size, decoder_output_dim + target_embedding_dim)
-            decoder_input = torch.cat((attended_input, embedded_input), -1)
-        else:
-            # shape: (group_size, target_embedding_dim)
-            decoder_input = embedded_input
+        # shape: (group_size, decoder_output_dim + target_embedding_dim)
+        decoder_input = torch.cat((attended_input, embedded_input), -1)
         decoder_input = self._dropout(decoder_input)
 
         # shape (decoder_hidden): (batch_size, decoder_output_dim)
@@ -555,27 +570,31 @@ class SimpleSeq2Seq(Model):
 
         state["decoder_hidden"] = decoder_hidden
         state["decoder_context"] = decoder_context
+        state["coverage_context"] = torch.add(coverage_context, input_weights)
 
         # shape: (group_size, num_classes)
         output_projections = self._output_projection_layer(self._dropout(decoder_hidden))
 
-        return output_projections, state
+        return input_weights, output_projections, state
 
     def _prepare_attended_input(
         self,
-        decoder_hidden_state: torch.LongTensor = None,
-        encoder_outputs: torch.LongTensor = None,
+        decoder_hidden_state: torch.Tensor = None,
+        encoder_outputs: torch.Tensor = None,
         encoder_outputs_mask: torch.BoolTensor = None,
+        coverage_context: torch.Tensor = None,
         attention_supervision: torch.Tensor = None,
         t_mask: torch.Tensor = None,
-    ) -> torch.Tensor:
+    ):
         """Apply attention over encoder outputs and decoder state.
 
         attention_supervision: (batch_size, num_inputs) -- For this step, inputs to attend to
         t_mask: (batch_size,) -- Mask for this decoding time-step
         """
+        encoder_outputs_mask = encoder_outputs_mask.float()
+
         # shape: (batch_size, max_input_sequence_length)
-        input_weights = self._attention(decoder_hidden_state, encoder_outputs, encoder_outputs_mask)
+        input_weights = self._attention(decoder_hidden_state, encoder_outputs, coverage_context, encoder_outputs_mask)
 
         if attention_supervision is None:
             attn_loss = 0
@@ -583,7 +602,7 @@ class SimpleSeq2Seq(Model):
             # Shape: (batch_size,) -- should be 0s if superivision is to attend to no tokens
             attn_sup_mask = (torch.sum(attention_supervision, dim=1) > 0).float()
             # Shape: (batch_size, num_inputs)
-            attended_probabilities = input_weights * attention_supervision * encoder_outputs_mask.float() * \
+            attended_probabilities = input_weights * attention_supervision * encoder_outputs_mask * \
                                      t_mask.unsqueeze(1).float() * attn_sup_mask.unsqueeze(1).float()
             # Maximize the sum of probabities
             attended_probabilities = torch.sum(attended_probabilities, dim=1)
@@ -593,8 +612,7 @@ class SimpleSeq2Seq(Model):
         # shape: (batch_size, encoder_output_dim)
         attended_input = util.weighted_sum(encoder_outputs, input_weights)
 
-
-        return attended_input, attn_loss
+        return attended_input, input_weights, attn_loss
 
     @staticmethod
     def _get_loss(
@@ -633,9 +651,46 @@ class SimpleSeq2Seq(Model):
 
         return util.sequence_cross_entropy_with_logits(logits, relevant_targets, relevant_mask)
 
+    @staticmethod
+    def _get_coverage_loss(attn_weights: torch.Tensor,
+                           source_mask: torch.LongTensor,
+                           target_mask: torch.LongTensor) -> torch.Tensor:
+        """
+        Computes the coverage loss: the minimal between the weight assigned to each input token in the current step,
+        and the total weight assigned to it on previous steps, summed across all input tokens and steps.
+        """
+        # shape: (batch_size, max_decoding_steps, max_input_seq_length
+        attn_weights = attn_weights.float()
+        # shape: (batch_size, max_decoding_steps)
+        target_mask = target_mask.float()
+        # shape: (batch_size, max_input_seq_length)
+        source_mask = source_mask.float()
+
+        batch_size = attn_weights.size(0)
+        max_decoding_steps = attn_weights.size(1)
+        max_input_seq_length = attn_weights.size(2)
+
+        # shape : (batch_size,)
+        actual_steps_per_batch = target_mask.sum(dim=1)
+
+        all_contexts = attn_weights.cumsum(1)
+        # we lose the first attention vector (as there's no context to compare with),
+        # and the last context vector (as there's attention vector to compare with)
+        loss_per_entry = torch.min(attn_weights[:, 1:, :], all_contexts[:, :-1, :])
+
+        loss_per_entry = loss_per_entry * source_mask.view(batch_size, 1, max_input_seq_length).expand_as(
+            loss_per_entry)
+        loss_per_entry = loss_per_entry * target_mask[:, 1:-1].view(batch_size, max_decoding_steps - 1, 1).expand_as(
+            loss_per_entry)
+
+        # average across all timesteps and batches (between 0 to 1)
+        per_batch_loss = loss_per_entry.sum(dim=(1, 2)) / (actual_steps_per_batch + 1e-13)
+        return per_batch_loss.sum() / batch_size
+
     @overrides
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         all_metrics: Dict[str, float] = {}
+        all_metrics.update({'coverage_loss': self._coverage_loss.get_metric(reset=reset)})
         if not self.training:
             exact_match = self._exact_match.get_metric(reset=reset)
             all_metrics.update({'exact_match': exact_match})

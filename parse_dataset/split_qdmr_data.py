@@ -195,7 +195,8 @@ def unbiased_test_selection(qdmr_examples: List[QDMRExample], testsize: int, tem
     test_qids = []
     print("sampling test templates w/o replacement ... ")
     while len(test_qids) < testsize:
-        counts = np.array(template_counts) - 1   # sampling templates with count=1 would make them extinct from training
+        counts = np.array(template_counts) - 3   # sampling templates w/ cnt>3 so that there are some left for tr/dev
+        counts = np.clip(counts, 0, 100000)
         template_distribution = counts / np.sum(counts)
         template_idx = choice(list(range(num_templates)), 1, p=template_distribution)
         template_idx = int(template_idx)

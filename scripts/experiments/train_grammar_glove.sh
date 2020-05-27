@@ -5,7 +5,7 @@ INCLUDE_PACKAGE=qdmr
 
 
 DATASET_ROOT=/shared/nitishg/data/qdmr-processed/QDMR-high-level
-DATASET_NAME=DROP/splits
+DATASET_NAME=DROP/resplits
 SPLIT_TYPE=full-20
 
 TRAINFILE=${DATASET_ROOT}/${DATASET_NAME}/${SPLIT_TYPE}/train.json
@@ -43,9 +43,9 @@ SERIALIZATION_DIR=${SERIALIZATION_DIR_ROOT}/${MODEL_DIR}/${PD}/S_${SEED}
 export BATCH_SIZE=16
 export SEED=1
 
-for seed in 42 1337
+for seed in 1 2 3 4 5
 do
-  for attnloss in true false
+  for attnloss in false # true
   do
     export ATTNLOSS=${attnloss}
     export SEED=${seed}

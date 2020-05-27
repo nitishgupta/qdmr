@@ -17,11 +17,14 @@ local devfile = std.extVar("DEV_FILE");
       "type": "spacy"
     },
     "source_token_indexers": {
+      "elmo": {
+        "type": "elmo_characters"
+      },
       "tokens": {
         "type": "single_id",
-        "namespace": "source_tokens"
-      }
-    },
+          "namespace": "source_tokens"
+        }
+    }
   },
 
   "train_data_path": trainfile,
@@ -37,12 +40,19 @@ local devfile = std.extVar("DEV_FILE");
           "vocab_namespace": "source_tokens",
           "embedding_dim": glove_size,
           "trainable": false
+        },
+        "elmo": {
+          "type": "elmo_token_embedder",
+          "options_file": "https://allennlp.s3.amazonaws.com/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json",
+          "weight_file": "https://allennlp.s3.amazonaws.com/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5",
+          "do_layer_norm": false,
+          "dropout": 0.0
         }
       }
     },
     "encoder": {
       "type": "lstm",
-      "input_size": glove_size,
+      "input_size": 1124,
       "hidden_size": 100,
       "num_layers": 1,
       "bidirectional": true,

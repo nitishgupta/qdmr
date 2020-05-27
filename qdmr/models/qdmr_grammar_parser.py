@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from overrides import overrides
 import torch
+from torch.nn.modules import Dropout
 
 from allennlp.data import Vocabulary
 from allennlp.models.model import Model
@@ -67,7 +68,7 @@ class QDMRGrammarParser(Model):
         input_attention: Attention,
         use_attention_loss: bool = False,
         add_action_bias: bool = True,
-        dropout: float = 0.0,
+        dropout: float = 0.2,
         initializer: InitializerApplicator = InitializerApplicator(),
         regularizer: Optional[RegularizerApplicator] = None,
     ) -> None:
@@ -159,6 +160,7 @@ class QDMRGrammarParser(Model):
         long_mask = util.get_text_field_mask(tokens)
         mask = long_mask.float()
         batch_size = embedded_utterance.size(0)
+        embedded_utterance = self._dropout(embedded_utterance)
 
         # (batch_size, num_tokens, encoder_output_dim)
         encoder_outputs = self._dropout(self._encoder(embedded_utterance, mask))

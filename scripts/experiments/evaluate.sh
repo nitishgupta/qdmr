@@ -3,21 +3,18 @@
 # PACKAGE TO BE INCLUDED WHICH HOUSES ALL THE CODE
 INCLUDE_PACKAGE=qdmr
 export GPU=0
-export BEAMSIZE=1
-
-# SAVED MODEL
 
 DATASET_ROOT=/shared/nitishg/data/qdmr-processed/QDMR-high-level
-DATASET_NAME=DROP/splits
+DATASET_NAME=DROP/resplits
 
-for attn in true false
+for attn in false true
 do
-  for SPLIT_TYPE in full full-50 full-40 full-30 full-20
+  for SPLIT_TYPE in full full-20 # full-50 full-40 full-30
   do
-    for seed in 42 1337
+    for seed in 1 2 3 4 5
     do
-      MODEL_DIR=/shared/nitishg/qdmr/semparse-gen/checkpoints/${DATASET_NAME}/${SPLIT_TYPE}/Seq2Seq-glove/BS_16/INORDER_true/ATTNLOSS_${attn}/S_${seed}
-      # MODEL_DIR=/shared/nitishg/qdmr/semparse-gen/checkpoints/${DATASET_NAME}/${SPLIT_TYPE}/Grammar-glove/BS_16/ATTNLOSS_${attn}/S_${seed}
+      MODEL_DIR=/shared/nitishg/qdmr/semparse-gen/checkpoints/${DATASET_NAME}/${SPLIT_TYPE}/Seq2Seq-elmo/BS_16/INORDER_true/ATTNLOSS_${attn}/S_${seed}
+      # MODEL_DIR=/shared/nitishg/qdmr/semparse-gen/checkpoints/${DATASET_NAME}/${SPLIT_TYPE}/Grammar-elmo/BS_16/ATTNLOSS_${attn}/S_${seed}
       MODEL_TAR=${MODEL_DIR}/model.tar.gz
       PREDICTION_DIR=${MODEL_DIR}/predictions
       mkdir ${PREDICTION_DIR}
