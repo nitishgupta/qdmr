@@ -7,6 +7,7 @@ local glove_path = std.extVar("GLOVE");
 local glove_size = utils.parse_number(std.extVar("GLOVE_EMB_DIM"));
 local inorder = utils.boolparser(std.extVar("INORDER"));
 local attn_loss = utils.boolparser(std.extVar("ATTNLOSS"));
+local attn_spans = utils.boolparser(std.extVar("ATTNSPANS"));
 
 local trainfile = std.extVar("TRAIN_FILE");
 local devfile = std.extVar("DEV_FILE");
@@ -74,6 +75,11 @@ local devfile = std.extVar("DEV_FILE");
       "type": "cosine"
     },
     "use_attention_loss": attn_loss,
+    "use_attention_over_spans": attn_spans,
+    "span_extractor": {
+      "type": "self_attentive",
+      "input_dim": 200,
+    },
     "beam_size": 5
   },
 

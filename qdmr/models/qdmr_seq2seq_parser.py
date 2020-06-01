@@ -11,6 +11,7 @@ from torch.nn.modules import Dropout
 from allennlp.common.util import START_SYMBOL, END_SYMBOL
 from allennlp.data import TextFieldTensors, Vocabulary
 from allennlp.modules import Attention, TextFieldEmbedder, Seq2SeqEncoder
+from allennlp.modules.span_extractors import SpanExtractor
 from allennlp.models.model import Model
 from allennlp.modules.token_embedders import Embedding
 from allennlp.nn import util
@@ -79,6 +80,8 @@ class SimpleSeq2Seq(Model):
         max_decoding_steps: int,
         attention: Attention = None,
         use_attention_loss: bool = False,
+        use_attention_over_spans: bool = False,
+        span_extractor: SpanExtractor = None,
         beam_size: int = None,
         target_namespace: str = "tokens",
         target_embedding_dim: int = None,
@@ -150,6 +153,10 @@ class SimpleSeq2Seq(Model):
             self._decoder_input_dim = target_embedding_dim
             self.use_attention_loss = False
 
+        self.use_attention_over_spans = use_attention_over_spans
+        self._span_extractor = span_extractor
+        assert not (self.use_attention_loss and self.use_attention_over_spans), "both cannot be true together"
+
         # We'll use an LSTM cell as the recurrent cell that produces a hidden state
         # for the decoder at each time step.
         # TODO (pradeep): Do not hardcode decoder cell type.
@@ -204,6 +211,7 @@ class SimpleSeq2Seq(Model):
     def forward(
         self,  # type: ignore
         source_tokens: TextFieldTensors,
+        question_spans: torch.LongTensor = None,
         target_tokens: TextFieldTensors = None,
         attention_supervision: torch.Tensor = None,
         metadata: List[Dict[str, Any]] = None,
@@ -225,7 +233,11 @@ class SimpleSeq2Seq(Model):
 
         Dict[str, torch.Tensor]
         """
-        state = self._encode(source_tokens)
+
+        if self.use_attention_over_spans:
+            assert question_spans is not None, "No spans passed for attention"
+
+        state = self._encode(source_tokens, question_spans)
 
         if target_tokens:
             state = self._init_decoder_state(state)
@@ -352,7 +364,7 @@ class SimpleSeq2Seq(Model):
             batch_tokens.append(tokens)
         return batch_indices, batch_tokens, longest_sequence
 
-    def _encode(self, source_tokens: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def _encode(self, source_tokens: Dict[str, torch.Tensor], spans: torch.LongTensor) -> Dict[str, torch.Tensor]:
         # shape: (batch_size, max_input_sequence_length, encoder_input_dim)
         embedded_input = self._source_embedder(source_tokens)
         embedded_input = self._dropout(embedded_input)
@@ -361,7 +373,17 @@ class SimpleSeq2Seq(Model):
         # shape: (batch_size, max_input_sequence_length, encoder_output_dim)
         encoder_outputs = self._encoder(embedded_input, source_mask)
         encoder_outputs = self._dropout(encoder_outputs)
-        return {"source_mask": source_mask, "encoder_outputs": encoder_outputs}
+
+        outputs = {"source_mask": source_mask, "encoder_outputs": encoder_outputs}
+        if self.use_attention_over_spans:
+            span_mask = (spans[:, :, 0] >= 0).squeeze(-1).long()
+            if span_mask.dim() == 1:
+                # Happens if batch_size=1 and input-utterance is len=1
+                span_mask = span_mask.unsqueeze(-1)
+            span_representations = self._span_extractor(encoder_outputs, spans, span_mask)
+            outputs["source_mask"] = span_mask
+            outputs["encoder_outputs"] = span_representations
+        return outputs
 
     def _init_decoder_state(self, state: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         batch_size = state["source_mask"].size(0)

@@ -56,12 +56,11 @@ class GrammarDatasetReader(DatasetReader):
                  random_seed: int = 0) -> None:
         super().__init__(lazy)
         self._random_seed = random_seed
-        self._source_tokenizer = source_tokenizer or SpacyTokenizer()
+        self._source_tokenizer = source_tokenizer
         self._source_token_indexers = source_token_indexers or {"tokens": SingleIdTokenIndexer(namespace="source_tokens")}
         # Number of examples with no gold program
         self.skipped_wo_program: int = 0
         self.longest_program: int = 0
-
 
     @overrides
     def _read(self, file_path: str):
@@ -126,11 +125,15 @@ class GrammarDatasetReader(DatasetReader):
         # pylint: disable=arguments-differ
         fields: Dict[str, Field] = {}
 
-        if "question_tokens" in extras:
+        if self._source_tokenizer is None:
+            # Even works with BERT using Mismatched TokenIndexer. The mismatched-indexer internally uses a
+            # bert-tokenizer which adds the [CLS] and [SEP] tokens. The mismatched-embedder only outputs the embeddings
+            # for actual tokens we pass, though.
+            assert "question_tokens" in extras, "Source tokenizer is None. Need to pass pre-tokenized text."
             question_tokens: List[str] = extras["question_tokens"]
             tokenized_source: List[Token] = [Token(t) for t in question_tokens]
         else:
-            logger.info("Tokenizing questions. Earlier it presented errors!! Pre-tokenize utterances ")
+            logger.info("Tokenizing questions using source_tokenizer. Pre-tokenize utterances if possible.")
             tokenized_source: List[Token] = self._source_tokenizer.tokenize(utterance)
 
         source_field = TextField(tokenized_source, self._source_token_indexers)

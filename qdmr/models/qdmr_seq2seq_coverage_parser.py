@@ -208,6 +208,7 @@ class SimpleSeq2SeqCoverage(Model):
     def forward(
         self,  # type: ignore
         source_tokens: TextFieldTensors,
+        question_spans: torch.LongTensor = None,
         target_tokens: TextFieldTensors = None,
         attention_supervision: torch.Tensor = None,
         metadata: List[Dict[str, Any]] = None,

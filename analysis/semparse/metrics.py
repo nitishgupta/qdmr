@@ -5,45 +5,6 @@ from collections import defaultdict
 import numpy as np
 
 
-# splits = ["full-50", "full-40", "full-30", "full-20", "full"]  # "full",
-
-# def print_single_metrics(pred_dir, metrics_json):
-#     metrics_file = os.path.join(pred_dir, metrics_json)
-#     try:
-#         metrics = json.load(open(metrics_file))
-#         metrics_key = metrics_json[:-5]
-#         print("{}: {}".format(metrics_key, metrics))
-#         return metrics_key, metrics["exact_match"]
-#     except FileNotFoundError:
-#         print("Not found: {}".format(metrics_file))
-#
-#
-# def print_metrics(split, attn):
-#     # model_dir = "/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/splits/{}/Seq2Seq-glove/BS_16/INORDER_true/ATTNLOSS_{}/S_1337".format(split, attn)
-#     model_dir = "/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/splits/{}/Grammar-glove/BS_16/ATTNLOSS_{}/S_1".format(split, attn)
-#
-#     print()
-#     print(model_dir)
-#     print("SPLIT: {}  Attn:{}".format(split, attn))
-#
-#     metrics_file = os.path.join(model_dir, "metrics.json")
-#     try:
-#         train_metrics = json.load(open(metrics_file))
-#         print("Best epoch: {}".format(train_metrics["best_epoch"]))
-#     except FileNotFoundError:
-#         print("Not found: {}".format(metrics_file))
-#
-#     pred_dir = os.path.join(model_dir, "predictions")
-#
-#     print_single_metrics(pred_dir, "dev_metrics.json")
-#
-#     print_single_metrics(pred_dir, "indomain_skewed_test_metrics.json")
-#
-#     print_single_metrics(pred_dir, "indomain_unbiased_test_metrics.json")
-#
-#     print_single_metrics(pred_dir, "heldout_test_metrics.json")
-
-
 def get_exact_match(pred_dir, metrics_json):
     metrics_file = os.path.join(pred_dir, metrics_json)
     metrics_key = metrics_json[:-5]
@@ -51,7 +12,7 @@ def get_exact_match(pred_dir, metrics_json):
         metrics = json.load(open(metrics_file))
         return metrics_key, metrics["exact_match"]
     except FileNotFoundError:
-        print("Not found: {}".format(metrics_file))
+        # print("Not found: {}".format(metrics_file))
         return None, None
 
 
@@ -66,8 +27,28 @@ def get_seq2seq_elmo_model_dir(splits_dir, split, attn, seed):
     return model_dir
 
 
+def get_seq2seq_bert_model_dir(splits_dir, split, attn, seed):
+    model_dir = f"/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/{splits_dir}/{split}/Seq2Seq-bert/BS_16/INORDER_true/ATTNLOSS_{attn}/S_{seed}"
+    return model_dir
+
+
 def get_seq2seq_coverage_model_dir(splits_dir, split, attn, seed):
     model_dir = f"/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/{splits_dir}/{split}/Seq2Seq-glove-coverage/BS_16/INORDER_true/ATTNLOSS_{attn}/S_{seed}"
+    return model_dir
+
+
+def get_seq2seq_elmo_coverage_model_dir(splits_dir, split, attn, seed):
+    model_dir = f"/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/{splits_dir}/{split}/Seq2Seq-elmo-coverage/BS_16/INORDER_true/ATTNLOSS_{attn}/S_{seed}"
+    return model_dir
+
+
+def get_seq2seq_spans_model_dir(splits_dir, split, attn, seed):
+    model_dir = f"/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/{splits_dir}/{split}/Seq2Seq-glove-spans/BS_16/INORDER_true/ATTNLOSS_{attn}/S_{seed}"
+    return model_dir
+
+
+def get_seq2seq_elmo_spans_model_dir(splits_dir, split, attn, seed):
+    model_dir = f"/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/{splits_dir}/{split}/Seq2Seq-elmo-spans/BS_16/INORDER_true/ATTNLOSS_{attn}/S_{seed}"
     return model_dir
 
 
@@ -75,8 +56,14 @@ def get_grammar_model_dir(splits_dir, split, attn, seed):
     model_dir = f"/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/{splits_dir}/{split}/Grammar-glove/BS_16/ATTNLOSS_{attn}/S_{seed}"
     return model_dir
 
+
 def get_grammar_elmo_model_dir(splits_dir, split, attn, seed):
     model_dir = f"/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/{splits_dir}/{split}/Grammar-elmo/BS_16/ATTNLOSS_{attn}/S_{seed}"
+    return model_dir
+
+
+def get_grammar_bert_model_dir(splits_dir, split, attn, seed):
+    model_dir = f"/shared/nitishg/qdmr/semparse-gen/checkpoints/DROP/{splits_dir}/{split}/Grammar-bert/BS_16/ATTNLOSS_{attn}/S_{seed}"
     return model_dir
 
 
@@ -87,19 +74,54 @@ def get_average_perc(values: List[float]) -> float:
     return float(perc)
 
 
-def avg_metrics(get_modeldir_fn, splits_dir, attn):
-
+def best_metrics(get_modeldir_fn, splits_dir, attn):
     print(f"Model dif fn: {get_modeldir_fn}")
     print(f"Splits: {splits_dir}")
     print(f"Attn: {attn}")
 
     dataset_metrics = {}
 
-    splits = ["full", "full-20", "full-50", "full-40", "full-30"]
+    splits = ["full-20"]
     for split in splits:
         # metrics for this dataset; {metrics_key: [values]}
         metrics_dict = defaultdict(list)
-        # for seed in [1, 2, 21, 42, 1337]:
+        best_seed = -1
+        best_dev = -1
+        for seed in [1, 2, 3, 4, 5]:
+            model_dir = get_modeldir_fn(splits_dir, split, attn, seed)  # Model setting w/ seed
+            pred_dir = os.path.join(model_dir, "predictions")
+            # For this model/seed get exact_match for different test sets and add to metrics_dict
+            _, dev_acc = get_exact_match(pred_dir, metrics_json="dev_metrics.json")
+            if dev_acc is None:
+                continue
+            if dev_acc > best_dev:
+                best_dev = dev_acc
+                best_seed = seed
+        best_metric_dict = {}
+        best_model_dir = get_modeldir_fn(splits_dir, split, attn, best_seed)  # Model setting w/ seed
+        best_pred_dir = os.path.join(best_model_dir, "predictions")
+        # for metrics_json in ["dev_metrics.json", "indomain_skewed_test_metrics.json",
+        #                      "indomain_unbiased_test_metrics.json", "heldout_test_metrics.json"]:
+        for metrics_json in ["indomain_unbiased_test_metrics.json", "heldout_test_metrics.json", "dev_metrics.json"]:
+            metric_key, value = get_exact_match(best_pred_dir, metrics_json)
+            value = np.around(value*100.0, decimals=1)
+            best_metric_dict[metric_key] = value
+        dataset_metrics[split] = best_metric_dict
+
+    return dataset_metrics
+
+
+def avg_metrics(get_modeldir_fn, splits_dir, attn):
+    print(f"Model dif fn: {get_modeldir_fn}")
+    print(f"Splits: {splits_dir}")
+    print(f"Attn: {attn}")
+
+    dataset_metrics = {}
+
+    splits = ["full-20"]
+    for split in splits:
+        # metrics for this dataset; {metrics_key: [values]}
+        metrics_dict = defaultdict(list)
         for seed in [1, 2, 3, 4, 5]:
             model_dir = get_modeldir_fn(splits_dir, split, attn, seed)  # Grammar or Seq2Seq or ....
             pred_dir = os.path.join(model_dir, "predictions")
@@ -116,42 +138,67 @@ def avg_metrics(get_modeldir_fn, splits_dir, attn):
 
     return dataset_metrics
 
-#
-# dataset_metrics = avg_metrics(get_seq2seq_model_dir, "resplits", "false")
-# print(json.dumps(dataset_metrics, indent=4))
-# print("\n")
-#
-# dataset_metrics = avg_metrics(get_seq2seq_model_dir, "resplits", "true")
-# print(json.dumps(dataset_metrics, indent=4))
-# print("\n")
 
-# dataset_metrics = avg_metrics(get_seq2seq_elmo_model_dir, "resplits", "false")
+# dataset_metrics = best_metrics(get_seq2seq_model_dir, "resplits", "false")
 # print(json.dumps(dataset_metrics, indent=4))
 # print("\n")
 #
-# dataset_metrics = avg_metrics(get_seq2seq_elmo_model_dir, "resplits", "true")
-# print(json.dumps(dataset_metrics, indent=4))
-# print("\n")
-
-#
-# dataset_metrics = avg_metrics(get_seq2seq_coverage_model_dir, "resplits", "false")
+# dataset_metrics = best_metrics(get_seq2seq_model_dir, "resplits", "true")
 # print(json.dumps(dataset_metrics, indent=4))
 # print("\n")
 #
 
-# dataset_metrics = avg_metrics(get_grammar_model_dir, "resplits", "false")
+# dataset_metrics = best_metrics(get_seq2seq_elmo_model_dir, "resplits", "false")
+# print(json.dumps(dataset_metrics, indent=4))
+# print("\n")
+
+# dataset_metrics = best_metrics(get_seq2seq_elmo_model_dir, "resplits", "true")
 # print(json.dumps(dataset_metrics, indent=4))
 # print("\n")
 #
-# dataset_metrics = avg_metrics(get_grammar_model_dir, "resplits", "true")
+
+
+# dataset_metrics = best_metrics(get_seq2seq_bert_model_dir, "resplits", "true")
 # print(json.dumps(dataset_metrics, indent=4))
 # print("\n")
-#
-#
-# dataset_metrics = avg_metrics(get_grammar_elmo_model_dir, "resplits", "false")
+
+# dataset_metrics = best_metrics(get_seq2seq_coverage_model_dir, "resplits", "false")
 # print(json.dumps(dataset_metrics, indent=4))
 # print("\n")
+# #
+# dataset_metrics = best_metrics(get_seq2seq_elmo_coverage_model_dir, "resplits", "false")
+# print(json.dumps(dataset_metrics, indent=4))
+# print("\n")
+# #
+# dataset_metrics = best_metrics(get_seq2seq_spans_model_dir, "resplits", "false")
+# print(json.dumps(dataset_metrics, indent=4))
+# print("\n")
+# #
+# dataset_metrics = best_metrics(get_seq2seq_elmo_spans_model_dir, "resplits", "false")
+# print(json.dumps(dataset_metrics, indent=4))
+# print("\n")
+
+dataset_metrics = best_metrics(get_grammar_model_dir, "resplits", "false")
+print(json.dumps(dataset_metrics, indent=4))
+print("\n")
+# #
+dataset_metrics = best_metrics(get_grammar_elmo_model_dir, "resplits", "false")
+print(json.dumps(dataset_metrics, indent=4))
+print("\n")
+
+# #
+dataset_metrics = best_metrics(get_grammar_model_dir, "resplits", "true")
+print(json.dumps(dataset_metrics, indent=4))
+print("\n")
 #
-dataset_metrics = avg_metrics(get_grammar_elmo_model_dir, "resplits", "true")
+dataset_metrics = best_metrics(get_grammar_elmo_model_dir, "resplits", "true")
+print(json.dumps(dataset_metrics, indent=4))
+print("\n")
+
+dataset_metrics = best_metrics(get_grammar_bert_model_dir, "resplits", "false")
+print(json.dumps(dataset_metrics, indent=4))
+print("\n")
+
+dataset_metrics = avg_metrics(get_grammar_bert_model_dir, "resplits", "true")
 print(json.dumps(dataset_metrics, indent=4))
 print("\n")

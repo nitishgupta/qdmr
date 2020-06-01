@@ -13,9 +13,6 @@ local devfile = std.extVar("DEV_FILE");
 {
   "dataset_reader": {
     "type": "qdmr_grammar_reader",
-    "source_tokenizer": {
-      "type": "spacy"
-    },
     "source_token_indexers": {
       "tokens": {
         "type": "single_id",
@@ -60,14 +57,6 @@ local devfile = std.extVar("DEV_FILE");
     "add_action_bias": true,
     "dropout": 0.2,
   },
-
-//  "data_loader": {
-//    "batch_sampler": {
-//        "type": "bucket",
-//        "batch_size": batch_size,
-//        "sorting_keys": ["tokens"],
-//    }
-//  },
 
   "data_loader": {
     "batch_sampler": {

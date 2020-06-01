@@ -3,75 +3,61 @@ local utils = import 'utils.libsonnet';
 local epochs = utils.parse_number(std.extVar("EPOCHS"));
 local batch_size = utils.parse_number(std.extVar("BATCH_SIZE"));
 local seed = utils.parse_number(std.extVar("SEED"));
-local glove_path = std.extVar("GLOVE");
-local glove_size = utils.parse_number(std.extVar("GLOVE_EMB_DIM"));
-local inorder = utils.boolparser(std.extVar("INORDER"));
 local attn_loss = utils.boolparser(std.extVar("ATTNLOSS"));
+
+local bert_model = "bert-base-uncased";
+local max_length = 128;
+local bert_dim = 768;  // uniquely determined by bert_model
 
 local trainfile = std.extVar("TRAIN_FILE");
 local devfile = std.extVar("DEV_FILE");
 
 {
   "dataset_reader": {
-    "type": "qdmr_seq2seq_reader",
-    "target_tokenizer": {
-      "type": "spacy",
-      "split_on_spaces": true
-    },
+    "type": "qdmr_grammar_reader",
     "source_token_indexers": {
       "tokens": {
-        "type": "single_id",
-        "namespace": "source_tokens"
+        "type": "pretrained_transformer_mismatched",
+        "model_name": bert_model,
+        "max_length": max_length,
       }
-    },
-    "target_token_indexers": {
-      "tokens": {
-        "type": "single_id",
-        "namespace": "target_tokens"
-      }
-    },
-    "inorder": inorder,
-  },
+    }
+},
 
   "train_data_path": trainfile,
   "validation_data_path": devfile,
 
   "model": {
-    "type": "qdmr_seq2seq_coverage",
-    "source_embedder": {
+    "type": "qdmr_grammar_parser",
+    "utterance_embedder": {
       "token_embedders": {
         "tokens": {
-          "type": "embedding",
-          "pretrained_file": glove_path,
-          "vocab_namespace": "source_tokens",
-          "embedding_dim": glove_size,
-          "trainable": false
+          "type": "pretrained_transformer_mismatched",
+          "model_name": bert_model,
+          "max_length": max_length,
         }
       }
     },
     "encoder": {
       "type": "lstm",
-      "input_size": glove_size,
+      "input_size": bert_dim,
       "hidden_size": 100,
       "num_layers": 1,
       "bidirectional": true,
       "dropout": 0.2,
     },
-    "max_decoding_steps": 50,
-    "target_embedding_dim": 100,
-    "target_namespace": "target_tokens",
-
+    "action_embedding_dim": 200,
+    "decoder_beam_search": {
+      "beam_size": 4,
+    },
+    "input_attention": {
+      "type": "dot_product"
+    },
     "use_attention_loss": attn_loss,
-    "beam_size": 5
+    "max_decoding_steps": 25,
+    "add_action_bias": true,
+    "dropout": 0.2,
   },
-
-//  "data_loader": {
-//    "batch_sampler": {
-//        "type": "bucket",
-//        "batch_size": batch_size,
-//        "padding_noise": 0.0
-//    }
-//  },
 
   "data_loader": {
     "batch_sampler": {
@@ -87,13 +73,18 @@ local devfile = std.extVar("DEV_FILE");
       "num_serialized_models_to_keep": 1,
     },
     "num_epochs": epochs,
-    "patience": 15,
+    // "patience": 25,
     "cuda_device": 0,
     "grad_clipping": 5.0,
     "validation_metric": "+exact_match",
+    // Weight decay from allennlp-models/training_config/syntax/bert_base_srl.jsonnet. E.g. rc/transformer_qa.jsonnet
     "optimizer": {
-      "type": "adam",
-      "lr": 1e-3
+     "type": "huggingface_adamw",
+      "lr": 2e-5,
+      "weight_decay": 0.01,
+      "parameter_groups": [
+        [["bias", "LayerNorm.bias", "LayerNorm\\.weight", "layer_norm\\.weight"], {"weight_decay": 0}]
+      ]
     }
   },
   "random_seed": seed,

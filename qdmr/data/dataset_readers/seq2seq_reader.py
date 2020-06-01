@@ -9,7 +9,7 @@ from overrides import overrides
 from allennlp.common.file_utils import cached_path
 from allennlp.common.util import START_SYMBOL, END_SYMBOL
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
-from allennlp.data.fields import TextField, Field, MetadataField, ArrayField
+from allennlp.data.fields import TextField, Field, MetadataField, ArrayField, SpanField, ListField
 from allennlp.data.instance import Instance
 from allennlp.data.tokenizers import Token, Tokenizer, SpacyTokenizer
 from allennlp.data.token_indexers import TokenIndexer, SingleIdTokenIndexer
@@ -58,8 +58,8 @@ class Seq2SeqDatasetReader(DatasetReader):
                  random_seed: int = 0) -> None:
         super().__init__(lazy)
         self._random_seed = random_seed
-        # self._source_tokenizer = source_tokenizer or SpacyTokenizer()
-        self._source_tokenizer = SpacyTokenizer()
+        # If source_tokenizer is not given, we will assume pre-tokenized text is fed
+        self._source_tokenizer = source_tokenizer
         self._target_tokenizer = target_tokenizer or SpacyTokenizer(split_on_spaces=True)
         self._source_token_indexers = source_token_indexers or {"tokens": SingleIdTokenIndexer(namespace="source_tokens")}
         self._target_token_indexers = target_token_indexers or {"tokens": SingleIdTokenIndexer(namespace="target_tokens")}
@@ -130,11 +130,15 @@ class Seq2SeqDatasetReader(DatasetReader):
         # pylint: disable=arguments-differ
         fields: Dict[str, Field] = {}
 
-        if "question_tokens" in extras:
+        if self._source_tokenizer is None:
+            # Even works with BERT using Mismatched TokenIndexer. The mismatched-indexer internally uses a
+            # bert-tokenizer which adds the [CLS] and [SEP] tokens. The mismatched-embedder only outputs the embeddings
+            # for actual tokens we pass, though.
+            assert "question_tokens" in extras, "Source tokenizer is None. Need to pass pre-tokenized text."
             question_tokens: List[str] = extras["question_tokens"]
             tokenized_source: List[Token] = [Token(t) for t in question_tokens]
         else:
-            logger.info("Tokenizing questions. Earlier it presented errors!! Pre-tokenize utterances ")
+            logger.info("Tokenizing questions using source_tokenizer. Pre-tokenize utterances if possible.")
             tokenized_source: List[Token] = self._source_tokenizer.tokenize(utterance)
 
         if self._source_add_start_token:
@@ -147,6 +151,17 @@ class Seq2SeqDatasetReader(DatasetReader):
             "utterance_tokens": [token.text for token in tokenized_source]
         }
 
+        if "question_spans" in extras:
+            question_spans: List[Tuple[int, int]] = extras["question_spans"]   # start & end inclusive
+            span_fields = []
+            for span in question_spans:
+                if self._source_add_start_token:
+                    span = (span[0] + 1, span[1] + 1)
+                assert span[1] < len(tokenized_source)
+                span_fields.append(SpanField(span[0], span[1], sequence_field=source_field))
+            span_fields = ListField(span_fields)
+            fields["question_spans"] = span_fields
+
         if target_string is not None:
             tokenized_target = self._target_tokenizer.tokenize(target_string)
             # Definitely add START and END symbols to target
@@ -158,6 +173,7 @@ class Seq2SeqDatasetReader(DatasetReader):
             self.longest_program = len(tokenized_target) if len(tokenized_target) > self.longest_program \
                 else self.longest_program
 
+            # Fast alignment from target-tokens to input-tokens (tokens; not word-pieces or spans)
             # If target is given, provide attention-supervision is available
             inorderstr = ".inorder" if self.inorder else ""
             fastalign_sup_key = "fastalign.seq2seq" + inorderstr

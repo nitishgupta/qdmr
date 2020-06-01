@@ -3,7 +3,10 @@ local utils = import 'utils.libsonnet';
 local epochs = utils.parse_number(std.extVar("EPOCHS"));
 local batch_size = utils.parse_number(std.extVar("BATCH_SIZE"));
 local seed = utils.parse_number(std.extVar("SEED"));
-local emb_size = utils.parse_number(std.extVar("EMB_DIM"));
+local glove_path = std.extVar("GLOVE");
+local glove_size = utils.parse_number(std.extVar("GLOVE_EMB_DIM"));
+local inorder = utils.boolparser(std.extVar("INORDER"));
+local attn_loss = utils.boolparser(std.extVar("ATTNLOSS"));
 
 local trainfile = std.extVar("TRAIN_FILE");
 local devfile = std.extVar("DEV_FILE");
@@ -11,44 +14,54 @@ local devfile = std.extVar("DEV_FILE");
 {
   "dataset_reader": {
     "type": "qdmr_seq2seq_reader",
-    "source_tokenizer": {
-      "type": "spacy"
-    },
     "target_tokenizer": {
       "type": "spacy",
       "split_on_spaces": true
     },
     "source_token_indexers": {
+      "elmo": {
+        "type": "elmo_characters"
+      },
       "tokens": {
         "type": "single_id",
-        "namespace": "source_tokens"
-      }
+          "namespace": "source_tokens"
+        }
     },
     "target_token_indexers": {
       "tokens": {
         "type": "single_id",
         "namespace": "target_tokens"
       }
-    }
+    },
+    "inorder": inorder,
   },
 
   "train_data_path": trainfile,
   "validation_data_path": devfile,
 
   "model": {
-    "type": "qdmr_seq2seq",
+    "type": "qdmr_seq2seq_coverage",
     "source_embedder": {
       "token_embedders": {
         "tokens": {
           "type": "embedding",
-          "embedding_dim": emb_size,
-          "trainable": true
+          "pretrained_file": glove_path,
+          "vocab_namespace": "source_tokens",
+          "embedding_dim": glove_size,
+          "trainable": false
+        },
+        "elmo": {
+          "type": "elmo_token_embedder",
+          "options_file": "https://allennlp.s3.amazonaws.com/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json",
+          "weight_file": "https://allennlp.s3.amazonaws.com/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5",
+          "do_layer_norm": false,
+          "dropout": 0.0
         }
       }
     },
     "encoder": {
       "type": "lstm",
-      "input_size": emb_size,
+      "input_size": 1124,
       "hidden_size": 100,
       "num_layers": 1,
       "bidirectional": true,
@@ -57,18 +70,18 @@ local devfile = std.extVar("DEV_FILE");
     "max_decoding_steps": 50,
     "target_embedding_dim": 100,
     "target_namespace": "target_tokens",
-    "attention": {
-      "type": "cosine"
-    },
+
+    "use_attention_loss": attn_loss,
     "beam_size": 5
   },
 
   "data_loader": {
     "batch_sampler": {
-        "type": "bucket",
-        "batch_size": batch_size,
-        "padding_noise": 0.0
-    }
+      "type": "basic",
+      "sampler": {"type": "random"},
+      "batch_size": batch_size,
+      "drop_last": false,
+    },
   },
 
   "trainer": {
@@ -76,13 +89,13 @@ local devfile = std.extVar("DEV_FILE");
       "num_serialized_models_to_keep": 1,
     },
     "num_epochs": epochs,
-    // "patience": 10,
+    "patience": 15,
     "cuda_device": 0,
     "grad_clipping": 5.0,
-    "validation_metric": "-loss",
+    "validation_metric": "+exact_match",
     "optimizer": {
       "type": "adam",
-      "lr": 1e-4
+      "lr": 1e-3
     }
   },
   "random_seed": seed,
