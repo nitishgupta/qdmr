@@ -113,7 +113,7 @@ def train_dev_stats(train_qid2ques, train_optemplate2count, train_optemplate2qid
     print()
 
     template2count_sorted = sorted(train_optemplate2count.items(), key=lambda x: x[1], reverse=True)
-    for i in range(0, 10):
+    for i in range(0, 20):
         template, count = template2count_sorted[i]
         print("{} {}".format(template, count))
         for j in range(0, 5):
@@ -151,7 +151,7 @@ def main(args):
     dev_qdmr_json = args.dev_qdmr_json
 
     train_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(train_qdmr_json)
-    dev_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(dev_qdmr_json)
+    # dev_qdmr_examples: List[QDMRExample] = read_qdmr_json_to_examples(dev_qdmr_json)
 
 
     train_qid2ques, train_optemplate2count, train_optemplate2qids, train_qid2nestedexp = read_qdmr(
